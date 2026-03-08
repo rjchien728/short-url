@@ -121,7 +121,6 @@ POST /v1/urls
 | referrer     | TEXT        | HTTP Referer                         |
 | user_agent   | TEXT        | 裝置與瀏覽器資訊                     |
 | ip_address   | VARCHAR(45) | 原始 IP（IPv4/IPv6，需符合隱私規範） |
-| ip_country   | VARCHAR(5)  | 國家碼（由 IP 解析）                 |
 | is_bot       | BOOLEAN     | 是否為爬蟲                           |
 | created_at   | TIMESTAMPTZ | 點擊時間                             |
 
