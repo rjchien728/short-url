@@ -1,5 +1,57 @@
 # 260308-short-url-implementation-plan
 
+---
+
+## 實作進度
+
+> 最後更新：2026-03-09
+
+### Phase 狀態總覽
+
+| Phase | 說明 | 狀態 | Commit |
+| :---- | :--- | :--- | :----- |
+| Phase 0 | 專案基礎建設 | ✅ 完成 | `3839e40` |
+| Phase 1 | Config 與基礎設施層 | ✅ 完成 | `c3fd067` |
+| Phase 2 | 工具層（internal/pkg） | ✅ 完成 | `c3fd067` |
+| Phase 3 | Domain 合約層 | ✅ 完成 | `c3fd067` |
+| Phase 4 | 被驅動層（Repository & Gateway） | 🔲 待開發 | — |
+| Phase 5 | 服務層（Service） | 🔲 待開發 | — |
+| Phase 6 | 驅動層 — HTTP Handler | 🔲 待開發 | — |
+| Phase 7 | 驅動層 — Redis Stream Consumer | 🔲 待開發 | — |
+| Phase 8 | E2E 驗收 | 🔲 待開發 | — |
+
+### 已交付清單
+
+#### Phase 0（commit `3839e40`）
+- `cmd/api/main.go`、`cmd/worker/main.go` 空殼
+- 完整目錄骨架（含 `.gitkeep`），移除多餘的 `internal/middleware/`
+- 依賴安裝：pgx v5.7.5、squirrel v1.5.4、go-redis v9.10.0、viper v1.20.1、testcontainers v0.38.0、testify v1.11.1、miniredis v2.34.0
+
+#### Phase 1（commit `c3fd067`）
+- `internal/infra/config.go`：Config struct + viper 載入（.env → 環境變數）
+- `internal/infra/postgres.go`：`NewPool()` — pgxpool，含 Ping 驗證
+- `internal/infra/redis.go`：`NewRedisClient()` — 支援 DB 0/1 隔離，含 Ping 驗證
+
+#### Phase 2（commit `c3fd067`）
+- `internal/pkg/logger/logger_test.go`：11 個 test cases
+- `internal/pkg/snowflake/`：41-bit ts + 12-bit seq，Epoch `1767225600000`，spin-wait 溢出保護
+- `internal/pkg/base58/`：Encode/Decode，固定 10 碼，Bitcoin Base58 alphabet
+- `internal/pkg/botdetect/`：`IsBot()`，涵蓋 30+ 社群/搜尋引擎/工具 UA
+
+#### Phase 3（commit `c3fd067`）
+- `internal/domain/entity/`：`ShortURL`、`OGMetadata`、`OGFetchTask`、`ClickLog`、`IsExpired()`
+- `internal/domain/entity/errors.go`：`ErrNotFound`、`ErrExpired` sentinel errors
+- `internal/domain/service/`：`URLService`、`RedirectService`、`OGWorkerService`、`ClickWorkerService`
+- `internal/domain/repository/repository.go`：4 個 repository interfaces
+- `internal/domain/gateway/gateway.go`：`OGFetcher` interface
+
+### 開發環境備註
+
+- devcontainer 環境：透過 `host.docker.internal` 連接外部 Docker 服務（PostgreSQL / Redis）
+- `.env` 中的 `DB_DSN`、`REDIS_CACHE_URL`、`REDIS_STREAM_URL` 皆使用 `host.docker.internal` host
+
+---
+
 ## 專案背景與動機
 
 本專案為系統設計作業題的實作練習，目標是從零開始實作一套具備生產水準思維的**社群短網址服務（Short URL Service）**。
