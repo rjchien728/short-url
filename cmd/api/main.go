@@ -50,14 +50,14 @@ func main() {
 		slog.Error("failed to connect to redis cache", "error", err)
 		os.Exit(1)
 	}
-	defer cacheRdb.Close()
+	defer func() { _ = cacheRdb.Close() }()
 
 	streamRdb, err := infra.NewRedisClient(ctx, cfg.Stream)
 	if err != nil {
 		slog.Error("failed to connect to redis stream", "error", err)
 		os.Exit(1)
 	}
-	defer streamRdb.Close()
+	defer func() { _ = streamRdb.Close() }()
 
 	// --- Repository & Gateway ---
 	urlRepo := shorturl.NewRepository(dbPool)

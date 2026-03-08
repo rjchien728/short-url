@@ -44,21 +44,27 @@ mock: ## Generate all mocks via go:generate (requires mockgen in PATH)
 	@echo "Mocks generated successfully."
 
 # --- Development Commands ---
-.PHONY: run-api run-worker build test lint
+.PHONY: run-api run-worker dev build test lint
 run-api: ## Start API Server
 	go run cmd/api/main.go
 
 run-worker: ## Start Worker
 	go run cmd/worker/main.go
 
+dev: ## Start API and Worker together (Ctrl+C stops both)
+	@go run cmd/api/main.go & API_PID=$$!; \
+	go run cmd/worker/main.go & WORKER_PID=$$!; \
+	trap "kill $$API_PID $$WORKER_PID 2>/dev/null" INT TERM; \
+	wait $$API_PID $$WORKER_PID
+
 build: ## Build the project
 	go build -o bin/$(BINARY_NAME) cmd/api/main.go
 
 test: ## Run unit tests only (no DB/Redis required)
-	go test -v -count=1 $(shell go list ./... | grep -v 'repository/shorturl\|repository/clicklog')
+	go test -v -count=1 -timeout=30s $(shell go list ./... | grep -v 'repository/shorturl\|repository/clicklog\|internal/consumer')
 
 test-integration: ## Run integration tests against local DB and Redis (requires migrate-up first)
-	go test -v -count=1 -timeout=60s ./internal/repository/... ./internal/gateway/...
+	go test -v -count=1 -timeout=120s ./internal/repository/... ./internal/gateway/... ./internal/consumer/...
 
 lint: ## Run linter (requires golangci-lint)
 	golangci-lint run

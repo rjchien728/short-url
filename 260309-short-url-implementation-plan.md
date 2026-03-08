@@ -17,7 +17,7 @@
 | Phase 4 | 被驅動層（Repository & Gateway） | ✅ 完成 | `991d697` |
 | Phase 5 | 服務層（Service） | ✅ 完成 | `096727e` |
 | Phase 6 | 驅動層 — HTTP Handler | ✅ 完成 | `cb388dc` |
-| Phase 7 | 驅動層 — Redis Stream Consumer | 🔲 待開發 | — |
+| Phase 7 | 驅動層 — Redis Stream Consumer | ✅ 完成 | — |
 | Phase 8 | E2E 驗收 | 🔲 待開發 | — |
 
 ### 已交付清單
@@ -65,6 +65,16 @@
 - `cmd/api/main.go`：完整組裝（config → infra → repo → svc → echo + logger.Middleware → graceful shutdown 10s）
 - `.gitignore`：新增排除 `/api`、`/worker` build binary
 
+#### Phase 7（未 commit）
+- `internal/infra/config.go`：新增 `ConsumerConfig` struct，讀取 `CONSUMER_OG_GROUP_NAME`、`CONSUMER_CLICK_GROUP_NAME`、`CONSUMER_NAME`、`CONSUMER_CLICK_BATCH_SIZE`、`CONSUMER_MAX_DELIVERY` 環境變數
+- `internal/domain/service/worker.go`：新增 `//go:generate mockgen` 指令
+- `internal/mock/mock_worker_service.go`：新增 `MockOGWorkerService`、`MockClickWorkerService`（generated）
+- `internal/consumer/og_consumer.go`：XREADGROUP 每次讀 1 筆，Block 5s，無論 ProcessTask 成功或失敗均 XACK（non-fatal）；建構子 XGroupCreateMkStream 忽略 BUSYGROUP
+- `internal/consumer/og_consumer_test.go`：3 個整合測試（success ACK、error 仍 ACK、field parse 驗證），需真實 Redis
+- `internal/consumer/click_consumer.go`：批次 XREADGROUP，成功 XACK 整批，失敗不 ACK 留 PEL；XCLAIM goroutine 每 10s 重認領 idle > 30s 訊息；超過 maxDelivery(5) 移至 `stream:click-dlq` + XACK 原訊息
+- `internal/consumer/click_consumer_test.go`：4 個整合測試（success ACK、failure 不 ACK 留 PEL、field parse 驗證、DLQ 超過 maxDelivery），需真實 Redis
+- `cmd/worker/main.go`：完整組裝（config → logger → DB pool → stream Redis → repo/gateway/service → consumer → errgroup 啟動兩 consumer → graceful shutdown via signal → cancel()）
+
 #### Phase 5（commit `096727e`）
 - `go.uber.org/mock` + `mockgen` CLI 安裝；Makefile 加入 `make mock` target
 - `//go:generate mockgen` 指令加入 `repository.go`、`gateway.go`、`snowflake.go`
@@ -96,7 +106,7 @@
 | `internal/repository/shorturl/`、`/clicklog/` | Integration test | local PostgreSQL（`DB_DSN`） | **是（需 migrate-up）** |
 | `internal/repository/urlcache/`、`/eventpub/` | Integration test | miniredis（in-process） | 否 |
 | `internal/gateway/ogfetch/` | Integration test | `httptest.NewServer` | 否 |
-| `internal/consumer/` | Integration test | miniredis（in-process） | 否 |
+| `internal/consumer/` | Integration test | real Redis（`REDIS_STREAM_URL`） | **是** |
 
 ### 測試指令
 
@@ -114,9 +124,10 @@ make test-integration    # 跑所有 repository/gateway 整合測試（需先 ma
 
 ### Redis 整合測試規則
 
-- `urlcache`、`eventpub`、`consumer` 使用 [miniredis](https://github.com/alicebob/miniredis)（純 Go in-process Redis 模擬器）
+- `urlcache`、`eventpub` 使用 [miniredis](https://github.com/alicebob/miniredis)（純 Go in-process Redis 模擬器）
 - 不需要 Docker，CI 無額外前置條件
 - 每個 test case 前執行 `FlushAll()` 清資料
+- `consumer` 使用真實 Redis（連接 `REDIS_STREAM_URL`），`REDIS_STREAM_URL` 未設時自動 `t.Skip()`
 
 ### CI 前置條件（未來接 GitHub Actions）
 

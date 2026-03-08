@@ -11,8 +11,9 @@ type Config struct {
 	App      AppConfig
 	Server   ServerConfig
 	Database DatabaseConfig
-	Cache    RedisConfig // Redis DB 0
-	Stream   RedisConfig // Redis DB 1
+	Cache    RedisConfig    // Redis DB 0
+	Stream   RedisConfig    // Redis DB 1
+	Consumer ConsumerConfig // Redis Stream consumer settings
 }
 
 // AppConfig holds basic application settings.
@@ -39,6 +40,15 @@ type RedisConfig struct {
 	URL string
 }
 
+// ConsumerConfig holds Redis Stream consumer settings.
+type ConsumerConfig struct {
+	OGGroupName    string // CONSUMER_OG_GROUP_NAME, default "og-worker-group"
+	ClickGroupName string // CONSUMER_CLICK_GROUP_NAME, default "click-worker-group"
+	ConsumerName   string // CONSUMER_NAME, default "worker-1"
+	ClickBatchSize int    // CONSUMER_CLICK_BATCH_SIZE, default 100
+	MaxDelivery    int    // CONSUMER_MAX_DELIVERY, default 5
+}
+
 // Load configuration following this priority:
 // Default values -> .env file -> Environment variables.
 func Load() (*Config, error) {
@@ -53,6 +63,11 @@ func Load() (*Config, error) {
 	v.SetDefault("DB_MAX_IDLE_CONNS", 5)
 	v.SetDefault("REDIS_CACHE_URL", "redis://localhost:6379/0")
 	v.SetDefault("REDIS_STREAM_URL", "redis://localhost:6379/1")
+	v.SetDefault("CONSUMER_OG_GROUP_NAME", "og-worker-group")
+	v.SetDefault("CONSUMER_CLICK_GROUP_NAME", "click-worker-group")
+	v.SetDefault("CONSUMER_NAME", "worker-1")
+	v.SetDefault("CONSUMER_CLICK_BATCH_SIZE", 100)
+	v.SetDefault("CONSUMER_MAX_DELIVERY", 5)
 
 	// 2. Read .env file (optional, for local development)
 	v.SetConfigFile(".env")
@@ -82,6 +97,13 @@ func Load() (*Config, error) {
 	}
 	cfg.Stream = RedisConfig{
 		URL: v.GetString("REDIS_STREAM_URL"),
+	}
+	cfg.Consumer = ConsumerConfig{
+		OGGroupName:    v.GetString("CONSUMER_OG_GROUP_NAME"),
+		ClickGroupName: v.GetString("CONSUMER_CLICK_GROUP_NAME"),
+		ConsumerName:   v.GetString("CONSUMER_NAME"),
+		ClickBatchSize: v.GetInt("CONSUMER_CLICK_BATCH_SIZE"),
+		MaxDelivery:    v.GetInt("CONSUMER_MAX_DELIVERY"),
 	}
 
 	// 5. Validate required fields

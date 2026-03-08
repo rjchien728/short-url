@@ -1,5 +1,103 @@
 package main
 
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rjchien728/short-url/internal/consumer"
+	"github.com/rjchien728/short-url/internal/gateway/ogfetch"
+	"github.com/rjchien728/short-url/internal/infra"
+	"github.com/rjchien728/short-url/internal/pkg/logger"
+	"github.com/rjchien728/short-url/internal/repository/clicklog"
+	"github.com/rjchien728/short-url/internal/repository/eventpub"
+	"github.com/rjchien728/short-url/internal/repository/shorturl"
+	clickworkersvc "github.com/rjchien728/short-url/internal/service/clickworker"
+	ogworkersvc "github.com/rjchien728/short-url/internal/service/ogworker"
+)
+
 func main() {
-	// Phase 7 Implementation
+	ctx := context.Background()
+
+	// --- Config ---
+	cfg, err := infra.Load()
+	if err != nil {
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	// --- Logger ---
+	if err := logger.Setup(cfg.App.LogLevel, "text"); err != nil {
+		slog.Warn("logger setup failed, using defaults", "error", err)
+	}
+
+	// --- Infrastructure ---
+	// Worker only needs the stream Redis client (no cache Redis needed).
+	dbPool, err := infra.NewPool(ctx, cfg.Database)
+	if err != nil {
+		slog.Error("failed to connect to postgres", "error", err)
+		os.Exit(1)
+	}
+	defer dbPool.Close()
+
+	streamRdb, err := infra.NewRedisClient(ctx, cfg.Stream)
+	if err != nil {
+		slog.Error("failed to connect to redis stream", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = streamRdb.Close() }()
+
+	// --- Repository & Gateway ---
+	urlRepo := shorturl.NewRepository(dbPool)
+	clickRepo := clicklog.NewRepository(dbPool)
+	publisher := eventpub.NewPublisher(streamRdb)
+	fetcher := ogfetch.NewFetcher(&http.Client{Timeout: 10 * time.Second})
+
+	// --- Service ---
+	ogSvc := ogworkersvc.New(urlRepo, fetcher, publisher)
+	clickSvc := clickworkersvc.New(clickRepo)
+
+	// --- Consumer ---
+	consumerCfg := cfg.Consumer
+	ogC := consumer.NewOGConsumer(
+		streamRdb, ogSvc,
+		consumerCfg.OGGroupName,
+		consumerCfg.ConsumerName,
+	)
+	clickC := consumer.NewClickConsumer(
+		streamRdb, clickSvc,
+		consumerCfg.ClickGroupName,
+		consumerCfg.ConsumerName,
+		consumerCfg.ClickBatchSize,
+		consumerCfg.MaxDelivery,
+	)
+
+	// --- Graceful Shutdown ---
+	workerCtx, cancel := context.WithCancel(ctx)
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-quit
+		slog.Info("shutting down worker...")
+		cancel()
+	}()
+
+	// --- Run consumers with errgroup ---
+	g, gCtx := errgroup.WithContext(workerCtx)
+	g.Go(func() error { return ogC.Run(gCtx) })
+	g.Go(func() error { return clickC.Run(gCtx) })
+
+	if err := g.Wait(); err != nil {
+		slog.Error("worker stopped with error", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("worker stopped")
 }
