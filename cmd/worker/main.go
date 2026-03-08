@@ -57,7 +57,7 @@ func main() {
 	urlRepo := shorturl.NewRepository(dbPool)
 	clickRepo := clicklog.NewRepository(dbPool)
 	publisher := eventpub.NewPublisher(streamRdb)
-	fetcher := ogfetch.NewFetcher(&http.Client{Timeout: 10 * time.Second})
+	fetcher := ogfetch.NewFetcher(&http.Client{Timeout: 10 * time.Second}, cfg.App.OGDefaultImage)
 
 	// --- Service ---
 	ogSvc := ogworkersvc.New(urlRepo, fetcher, publisher)

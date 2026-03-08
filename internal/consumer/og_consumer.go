@@ -101,6 +101,9 @@ func (c *OGConsumer) processMessage(ctx context.Context, msg redis.XMessage) {
 	if err := c.ogService.ProcessTask(ctx, task); err != nil {
 		slog.Error("og_consumer: ProcessTask failed, ACKing (non-fatal)",
 			"msg_id", msg.ID, "short_url_id", task.ShortURLID, "error", err)
+	} else {
+		slog.Info("og_consumer: task processed",
+			"msg_id", msg.ID, "short_url_id", task.ShortURLID, "long_url", task.LongURL)
 	}
 
 	// Always ACK — OG fetch failures are non-fatal and should not block the queue.

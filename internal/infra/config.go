@@ -18,8 +18,9 @@ type Config struct {
 
 // AppConfig holds basic application settings.
 type AppConfig struct {
-	Env      string `mapstructure:"APP_ENV"`
-	LogLevel string `mapstructure:"APP_LOG_LEVEL"`
+	Env            string `mapstructure:"APP_ENV"`
+	LogLevel       string `mapstructure:"APP_LOG_LEVEL"`
+	OGDefaultImage string `mapstructure:"OG_DEFAULT_IMAGE"` // fallback image URL when no image is found during OG fetch
 }
 
 // ServerConfig holds HTTP server settings.
@@ -57,6 +58,7 @@ func Load() (*Config, error) {
 	// 1. Set default values
 	v.SetDefault("APP_ENV", "development")
 	v.SetDefault("APP_LOG_LEVEL", "info")
+	v.SetDefault("OG_DEFAULT_IMAGE", "")
 	v.SetDefault("PORT", "8080")
 	v.SetDefault("SERVER_BASE_URL", "http://localhost:8080")
 	v.SetDefault("DB_MAX_OPEN_CONNS", 10)
@@ -80,8 +82,9 @@ func Load() (*Config, error) {
 	// 4. Parse configuration into structs
 	cfg := &Config{}
 	cfg.App = AppConfig{
-		Env:      v.GetString("APP_ENV"),
-		LogLevel: v.GetString("APP_LOG_LEVEL"),
+		Env:            v.GetString("APP_ENV"),
+		LogLevel:       v.GetString("APP_LOG_LEVEL"),
+		OGDefaultImage: v.GetString("OG_DEFAULT_IMAGE"),
 	}
 	cfg.Server = ServerConfig{
 		Port:    v.GetString("PORT"),

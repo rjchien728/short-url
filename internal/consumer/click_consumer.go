@@ -135,7 +135,9 @@ func (c *ClickConsumer) processBatch(ctx context.Context, msgs []redis.XMessage)
 	if err := c.rdb.XAck(ctx, clickStream, c.groupName, ids...).Err(); err != nil {
 		slog.Error("click_consumer: XACK failed after successful batch",
 			"count", len(ids), "error", err)
+		return
 	}
+	slog.Info("click_consumer: batch processed", "count", len(logs))
 }
 
 // reclaimLoop runs on a fixed interval to reclaim idle PEL messages and move
