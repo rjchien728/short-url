@@ -14,7 +14,7 @@
 | Phase 1 | Config 與基礎設施層 | ✅ 完成 | `c3fd067` |
 | Phase 2 | 工具層（internal/pkg） | ✅ 完成 | `c3fd067` |
 | Phase 3 | Domain 合約層 | ✅ 完成 | `c3fd067` |
-| Phase 4 | 被驅動層（Repository & Gateway） | 🔲 待開發 | — |
+| Phase 4 | 被驅動層（Repository & Gateway） | ✅ 完成 | `991d697` |
 | Phase 5 | 服務層（Service） | 🔲 待開發 | — |
 | Phase 6 | 驅動層 — HTTP Handler | 🔲 待開發 | — |
 | Phase 7 | 驅動層 — Redis Stream Consumer | 🔲 待開發 | — |
@@ -44,6 +44,15 @@
 - `internal/domain/service/`：`URLService`、`RedirectService`、`OGWorkerService`、`ClickWorkerService`
 - `internal/domain/repository/repository.go`：4 個 repository interfaces
 - `internal/domain/gateway/gateway.go`：`OGFetcher` interface
+
+#### Phase 4（commit `991d697`）
+- `internal/repository/shorturl/impl.go`：raw SQL + pgx，含 JSONB 解析，查無結果回傳 `ErrNotFound`
+- `internal/repository/clicklog/impl.go`：動態 multi-row INSERT
+- `internal/repository/urlcache/impl.go`：JSON 序列化，TTL 24h，cache miss 回傳 `(nil, nil)`
+- `internal/repository/eventpub/impl.go`：XADD 至 `stream:og-fetch` / `stream:click-log`，欄位格式符合 API spec
+- `internal/gateway/ogfetch/impl.go`：HTTP GET + `x/net/html` tokenizer 解析 OG tags
+- 整合測試：testcontainers-go（shorturl/clicklog）、miniredis（urlcache/eventpub）、httptest（ogfetch）
+- 注意：squirrel SQL builder 未採用，改用 raw SQL + pgx，依賴更輕量
 
 ### 開發環境備註
 
