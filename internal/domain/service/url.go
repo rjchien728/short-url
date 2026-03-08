@@ -1,3 +1,5 @@
+//go:generate mockgen -destination=../../mock/mock_service.go -package=mock github.com/rjchien728/short-url/internal/domain/service URLService,RedirectService
+
 package service
 
 import (

@@ -41,6 +41,7 @@ migrate-down: ## Rollback all migrations
 .PHONY: mock
 mock: ## Generate all mocks via go:generate (requires mockgen in PATH)
 	go generate ./internal/domain/... ./internal/pkg/snowflake/...
+	@echo "Mocks generated successfully."
 
 # --- Development Commands ---
 .PHONY: run-api run-worker build test lint
