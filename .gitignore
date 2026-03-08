@@ -1,5 +1,6 @@
 # Local development config (contains secrets)
 .env
+.devcontainer/
 
 # Go build output
 /bin/
