@@ -1,15 +1,23 @@
 package clicklog_test
 
+// Integration tests for ClickLog repository.
+//
+// Prerequisites: a running PostgreSQL instance with migrations applied.
+// Set DB_DSN environment variable (or use .env file) before running.
+//
+// Run with:
+//   make test-integration
+// or:
+//   DB_DSN=postgres://... go test ./internal/repository/clicklog/...
+
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/suite"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/repository/clicklog"
@@ -17,63 +25,25 @@ import (
 
 type ClickLogRepoSuite struct {
 	suite.Suite
-	container *tcpostgres.PostgresContainer
-	repo      *clicklog.Repository
-	pool      *pgxpool.Pool
+	pool *pgxpool.Pool
+	repo *clicklog.Repository
 }
 
 func (s *ClickLogRepoSuite) SetupSuite() {
-	ctx := context.Background()
+	dsn := os.Getenv("DB_DSN")
+	if dsn == "" {
+		s.T().Skip("DB_DSN not set — skipping integration tests")
+	}
 
-	// click_log has no FK constraint on short_url_id, so only this migration is needed.
-	const createSQL = `
-		CREATE TABLE IF NOT EXISTS click_log (
-			id UUID PRIMARY KEY,
-			short_url_id BIGINT NOT NULL,
-			short_code VARCHAR(10) NOT NULL,
-			creator_id VARCHAR(50) NOT NULL,
-			referral_id VARCHAR(50),
-			referrer TEXT,
-			user_agent TEXT,
-			ip_address VARCHAR(45),
-			is_bot BOOLEAN NOT NULL DEFAULT FALSE,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);`
-
-	container, err := tcpostgres.Run(ctx,
-		"postgres:17-alpine",
-		tcpostgres.WithDatabase("testdb"),
-		tcpostgres.WithUsername("test"),
-		tcpostgres.WithPassword("test"),
-		tcpostgres.WithSQLDriver("pgx"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
-	s.Require().NoError(err)
-	s.container = container
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	s.Require().NoError(err)
-
-	pool, err := pgxpool.New(ctx, dsn)
-	s.Require().NoError(err)
+	pool, err := pgxpool.New(context.Background(), dsn)
+	s.Require().NoError(err, "failed to connect to database")
 	s.pool = pool
-
-	_, err = pool.Exec(ctx, createSQL)
-	s.Require().NoError(err)
-
 	s.repo = clicklog.NewRepository(pool)
 }
 
 func (s *ClickLogRepoSuite) TearDownSuite() {
 	if s.pool != nil {
 		s.pool.Close()
-	}
-	if s.container != nil {
-		_ = s.container.Terminate(context.Background())
 	}
 }
 
@@ -105,7 +75,6 @@ func (s *ClickLogRepoSuite) TestBatchCreate_SingleRecord() {
 	err := s.repo.BatchCreate(ctx, logs)
 	s.Require().NoError(err)
 
-	// Verify the record exists.
 	var count int
 	s.Require().NoError(
 		s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM click_log").Scan(&count),

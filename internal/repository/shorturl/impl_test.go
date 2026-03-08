@@ -1,5 +1,15 @@
 package shorturl_test
 
+// Integration tests for ShortURL repository.
+//
+// Prerequisites: a running PostgreSQL instance with migrations applied.
+// Set DB_DSN environment variable (or use .env file) before running.
+//
+// Run with:
+//   make test-integration
+// or:
+//   DB_DSN=postgres://... go test ./internal/repository/shorturl/...
+
 import (
 	"context"
 	"os"
@@ -8,9 +18,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/suite"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/repository/shorturl"
@@ -18,46 +25,19 @@ import (
 
 type ShortURLRepoSuite struct {
 	suite.Suite
-	container *tcpostgres.PostgresContainer
-	repo      *shorturl.Repository
-	pool      *pgxpool.Pool
+	pool *pgxpool.Pool
+	repo *shorturl.Repository
 }
 
 func (s *ShortURLRepoSuite) SetupSuite() {
-	ctx := context.Background()
+	dsn := os.Getenv("DB_DSN")
+	if dsn == "" {
+		s.T().Skip("DB_DSN not set — skipping integration tests")
+	}
 
-	// Read migration SQL from project root.
-	createShortURL, err := os.ReadFile("../../../migrations/000001_create_short_url.up.sql")
-	s.Require().NoError(err)
-
-	// Start a temporary PostgreSQL 17 container.
-	container, err := tcpostgres.Run(ctx,
-		"postgres:17-alpine",
-		tcpostgres.WithDatabase("testdb"),
-		tcpostgres.WithUsername("test"),
-		tcpostgres.WithPassword("test"),
-		tcpostgres.WithSQLDriver("pgx"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
-	s.Require().NoError(err)
-	s.container = container
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	s.Require().NoError(err)
-
-	// Connect pool.
-	pool, err := pgxpool.New(ctx, dsn)
-	s.Require().NoError(err)
+	pool, err := pgxpool.New(context.Background(), dsn)
+	s.Require().NoError(err, "failed to connect to database")
 	s.pool = pool
-
-	// Run migration to create the short_url table.
-	_, err = pool.Exec(ctx, string(createShortURL))
-	s.Require().NoError(err)
-
 	s.repo = shorturl.NewRepository(pool)
 }
 
@@ -65,14 +45,11 @@ func (s *ShortURLRepoSuite) TearDownSuite() {
 	if s.pool != nil {
 		s.pool.Close()
 	}
-	if s.container != nil {
-		_ = s.container.Terminate(context.Background())
-	}
 }
 
 func (s *ShortURLRepoSuite) SetupTest() {
 	// Clean table before each test case to keep tests independent.
-	_, err := s.pool.Exec(context.Background(), "TRUNCATE short_url")
+	_, err := s.pool.Exec(context.Background(), "TRUNCATE short_url CASCADE")
 	s.Require().NoError(err)
 }
 

@@ -48,8 +48,11 @@ run-worker: ## 啟動 Worker
 build: ## 編譯專案
 	go build -o bin/$(BINARY_NAME) cmd/api/main.go
 
-test: ## 執行單元測試
-	go test -v ./...
+test: ## Run unit tests only (no DB/Redis required)
+	go test -v -count=1 $(shell go list ./... | grep -v 'repository/shorturl\|repository/clicklog')
+
+test-integration: ## Run integration tests against local DB and Redis (requires migrate-up first)
+	go test -v -count=1 -timeout=60s ./internal/repository/... ./internal/gateway/...
 
 lint: ## 執行代碼檢查 (需安裝 golangci-lint)
 	golangci-lint run
