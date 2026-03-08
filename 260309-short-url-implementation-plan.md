@@ -18,7 +18,7 @@
 | Phase 5 | 服務層（Service） | ✅ 完成 | `096727e` |
 | Phase 6 | 驅動層 — HTTP Handler | ✅ 完成 | `cb388dc` |
 | Phase 7 | 驅動層 — Redis Stream Consumer | ✅ 完成 | — |
-| Phase 8 | E2E 驗收 | 🔲 待開發 | — |
+| Phase 8 | E2E 驗收 | ❌ 不實作 | — |
 
 ### 已交付清單
 
