@@ -1,16 +1,16 @@
-# 引入 .env 變數（如果存在的話）
+# Load .env variables if present
 ifneq (,$(wildcard ./.env))
     include .env
     export
 endif
 
-# --- 基礎變數 ---
+# --- Base Variables ---
 BINARY_NAME=short-url-api
 MIGRATE_CMD=go run cmd/migrate/main.go
 
-# --- 初始化 ---
+# --- Initialization ---
 .PHONY: init
-init: ## 初始化環境：建立 .env 並啟動 Docker
+init: ## Initialize environment: create .env and start Docker
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
 		echo "Created .env from .env.example"; \
@@ -18,34 +18,39 @@ init: ## 初始化環境：建立 .env 並啟動 Docker
 	docker compose up -d
 	@echo "Infrastructure is up and running."
 
-# --- Docker 管理 ---
+# --- Docker Management ---
 .PHONY: docker-up docker-down docker-logs
-docker-up: ## 啟動基礎設施
+docker-up: ## Start infrastructure
 	docker compose up -d
 
-docker-down: ## 停止基礎設施
+docker-down: ## Stop infrastructure
 	docker compose down
 
-docker-logs: ## 查看 Docker 容器日誌
+docker-logs: ## View Docker container logs
 	docker compose logs -f
 
-# --- 資料庫遷移 (Migration) ---
+# --- Database Migration ---
 .PHONY: migrate-up migrate-down
-migrate-up: ## 執行所有尚未執行的遷移 (建立 Schema)
+migrate-up: ## Run all pending migrations
 	$(MIGRATE_CMD) up
 
-migrate-down: ## 撤銷所有遷移 (清空資料庫)
+migrate-down: ## Rollback all migrations
 	$(MIGRATE_CMD) down
 
-# --- 開發指令 ---
+# --- Mock Generation ---
+.PHONY: mock
+mock: ## Generate all mocks via go:generate (requires mockgen in PATH)
+	go generate ./internal/domain/... ./internal/pkg/snowflake/...
+
+# --- Development Commands ---
 .PHONY: run-api run-worker build test lint
-run-api: ## 啟動 API Server
+run-api: ## Start API Server
 	go run cmd/api/main.go
 
-run-worker: ## 啟動 Worker
+run-worker: ## Start Worker
 	go run cmd/worker/main.go
 
-build: ## 編譯專案
+build: ## Build the project
 	go build -o bin/$(BINARY_NAME) cmd/api/main.go
 
 test: ## Run unit tests only (no DB/Redis required)
@@ -54,12 +59,12 @@ test: ## Run unit tests only (no DB/Redis required)
 test-integration: ## Run integration tests against local DB and Redis (requires migrate-up first)
 	go test -v -count=1 -timeout=60s ./internal/repository/... ./internal/gateway/...
 
-lint: ## 執行代碼檢查 (需安裝 golangci-lint)
+lint: ## Run linter (requires golangci-lint)
 	golangci-lint run
 
-# --- 其他 ---
+# --- Miscellaneous ---
 .PHONY: help
-help: ## 顯示此幫助訊息
+help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 .DEFAULT_GOAL := help

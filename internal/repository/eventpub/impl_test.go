@@ -60,6 +60,25 @@ func (s *EventPubSuite) TestPublishOGFetchTask_FieldsCorrect() {
 	fields := msgs[0].Values
 	s.Equal("1001", fields["short_url_id"])
 	s.Equal("https://example.com/page", fields["long_url"])
+	s.Equal("0", fields["retry_count"])
+}
+
+func (s *EventPubSuite) TestPublishOGFetchTask_RetryCount() {
+	ctx := context.Background()
+
+	task := &entity.OGFetchTask{
+		ShortURLID: 1002,
+		LongURL:    "https://example.com/retry",
+		RetryCount: 2,
+	}
+
+	err := s.publisher.PublishOGFetchTask(ctx, task)
+	s.Require().NoError(err)
+
+	msgs, err := s.rdb.XRange(ctx, "stream:og-fetch", "-", "+").Result()
+	s.Require().NoError(err)
+	s.Require().Len(msgs, 1)
+	s.Equal("2", msgs[0].Values["retry_count"])
 }
 
 func (s *EventPubSuite) TestPublishClickEvent_FieldsCorrect() {

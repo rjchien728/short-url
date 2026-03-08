@@ -1,3 +1,4 @@
+//go:generate mockgen -destination=../../mock/mock_repository.go -package=mock github.com/rjchien728/short-url/internal/domain/repository ShortURLRepository,ClickLogRepository,URLCache,EventPublisher
 package repository
 
 import (

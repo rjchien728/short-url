@@ -1,3 +1,4 @@
+//go:generate mockgen -destination=../../mock/mock_gateway.go -package=mock github.com/rjchien728/short-url/internal/domain/gateway OGFetcher
 package gateway
 
 import (

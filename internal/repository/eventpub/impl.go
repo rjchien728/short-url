@@ -27,6 +27,7 @@ func NewPublisher(rdb *redis.Client) *Publisher {
 }
 
 // PublishOGFetchTask sends an OG fetch task to the stream:og-fetch stream.
+// retry_count tracks how many fetch attempts have been made; consumer re-enqueues on failure.
 func (p *Publisher) PublishOGFetchTask(ctx context.Context, task *entity.OGFetchTask) error {
 	err := p.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: ogStream,
@@ -34,6 +35,7 @@ func (p *Publisher) PublishOGFetchTask(ctx context.Context, task *entity.OGFetch
 		Values: map[string]any{
 			"short_url_id": strconv.FormatInt(task.ShortURLID, 10),
 			"long_url":     task.LongURL,
+			"retry_count":  strconv.Itoa(task.RetryCount),
 		},
 	}).Err()
 	if err != nil {

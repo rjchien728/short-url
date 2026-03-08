@@ -32,7 +32,9 @@ type OGMetadata struct {
 }
 
 // OGFetchTask is the event payload published to stream:og-fetch.
+// RetryCount tracks how many times the fetch has been attempted (0 = first attempt).
 type OGFetchTask struct {
 	ShortURLID int64
 	LongURL    string
+	RetryCount int
 }

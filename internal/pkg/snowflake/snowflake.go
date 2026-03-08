@@ -1,3 +1,4 @@
+//go:generate mockgen -destination=../../../internal/mock/mock_snowflake.go -package=mock github.com/rjchien728/short-url/internal/pkg/snowflake IDGenerator
 package snowflake
 
 import (
