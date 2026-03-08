@@ -16,7 +16,7 @@
 | Phase 3 | Domain 合約層 | ✅ 完成 | `c3fd067` |
 | Phase 4 | 被驅動層（Repository & Gateway） | ✅ 完成 | `991d697` |
 | Phase 5 | 服務層（Service） | ✅ 完成 | `096727e` |
-| Phase 6 | 驅動層 — HTTP Handler | 🔲 待開發 | — |
+| Phase 6 | 驅動層 — HTTP Handler | ✅ 完成 | `cb388dc` |
 | Phase 7 | 驅動層 — Redis Stream Consumer | 🔲 待開發 | — |
 | Phase 8 | E2E 驗收 | 🔲 待開發 | — |
 
@@ -53,6 +53,17 @@
 - `internal/gateway/ogfetch/impl.go`：HTTP GET + `x/net/html` tokenizer 解析 OG tags
 - 整合測試：local DB via `DB_DSN`（shorturl/clicklog）、miniredis（urlcache/eventpub）、httptest（ogfetch）
 - 注意：squirrel SQL builder 未採用，改用 raw SQL + pgx，依賴更輕量
+
+#### Phase 6（commit `cb388dc`）
+- `internal/domain/service/url.go`：新增 `//go:generate mockgen` 指令
+- `internal/mock/mock_service.go`：新增 `MockURLService`、`MockRedirectService`（generated）
+- `internal/handler/errors.go`：共用 `errorResponse` struct
+- `internal/handler/health_handler.go`：`GET /healthz` → 永遠回 200 `{"status":"ok"}`
+- `internal/handler/url_handler.go`：`POST /v1/urls`，驗證 long_url（scheme/長度/格式）與 creator_id，回傳 201 不含 Snowflake ID
+- `internal/handler/redirect_handler.go`：`GET /:shortCode`，bot 偵測 → 200 OG HTML / 一般 → 302，RecordClick fire-and-forget，錯誤映射 404/410/500
+- `internal/handler/*_test.go`：18 個 unit tests，覆蓋所有 curl 情境（201、400、302、200 bot、404、410、500、ref param、RecordClick 失敗不影響回應）
+- `cmd/api/main.go`：完整組裝（config → infra → repo → svc → echo + logger.Middleware → graceful shutdown 10s）
+- `.gitignore`：新增排除 `/api`、`/worker` build binary
 
 #### Phase 5（commit `096727e`）
 - `go.uber.org/mock` + `mockgen` CLI 安裝；Makefile 加入 `make mock` target
