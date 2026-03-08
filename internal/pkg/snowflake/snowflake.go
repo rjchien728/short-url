@@ -1,0 +1,81 @@
+package snowflake
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+const (
+	// epoch is 2026-01-01T00:00:00Z in Unix milliseconds.
+	epoch int64 = 1767225600000
+
+	// sequenceBits is the number of bits allocated for the per-ms sequence number.
+	sequenceBits uint = 12
+
+	// maxSequence is the maximum value of the 12-bit sequence (4095).
+	maxSequence int64 = (1 << sequenceBits) - 1
+)
+
+// IDGenerator defines the interface for generating unique int64 IDs.
+type IDGenerator interface {
+	Generate() (int64, error)
+}
+
+// Generator is a simplified Snowflake ID generator.
+// Bit layout (53 bits total, fits JS Number.MAX_SAFE_INTEGER):
+//
+//	[41-bit ms timestamp since epoch | 12-bit per-ms sequence]
+type Generator struct {
+	mu       sync.Mutex
+	lastMS   int64 // last millisecond timestamp used
+	sequence int64 // current sequence number within the same millisecond
+}
+
+// New creates a new Snowflake Generator.
+func New() *Generator {
+	return &Generator{}
+}
+
+// Generate produces a unique, monotonically increasing int64 ID.
+// If the per-ms sequence overflows (> 4095), it spin-waits until the next millisecond.
+func (g *Generator) Generate() (int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	now := currentMS()
+
+	if now == g.lastMS {
+		// same millisecond: increment sequence
+		g.sequence++
+		if g.sequence > maxSequence {
+			// sequence overflow: spin-wait for next millisecond
+			for now <= g.lastMS {
+				now = currentMS()
+			}
+			// new millisecond after spin-wait
+			g.sequence = 0
+			g.lastMS = now
+		}
+	} else if now > g.lastMS {
+		// new millisecond: reset sequence
+		g.sequence = 0
+		g.lastMS = now
+	} else {
+		// clock moved backwards
+		return 0, fmt.Errorf("clock moved backwards: last=%d now=%d", g.lastMS, now)
+	}
+
+	ts := now - epoch
+	if ts < 0 {
+		return 0, fmt.Errorf("current time is before snowflake epoch")
+	}
+
+	id := (ts << sequenceBits) | g.sequence
+	return id, nil
+}
+
+// currentMS returns the current Unix timestamp in milliseconds.
+func currentMS() int64 {
+	return time.Now().UnixMilli()
+}
