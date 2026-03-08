@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config 為整個應用的設定根結構。
+// Config is the root configuration structure for the application.
 type Config struct {
 	App      AppConfig
 	Server   ServerConfig
@@ -15,36 +15,36 @@ type Config struct {
 	Stream   RedisConfig // Redis DB 1
 }
 
-// AppConfig 為應用基礎設定。
+// AppConfig holds basic application settings.
 type AppConfig struct {
 	Env      string `mapstructure:"APP_ENV"`
 	LogLevel string `mapstructure:"APP_LOG_LEVEL"`
 }
 
-// ServerConfig 為 HTTP 服務設定。
+// ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	Port    string `mapstructure:"PORT"`
 	BaseURL string `mapstructure:"SERVER_BASE_URL"`
 }
 
-// DatabaseConfig 為 PostgreSQL 連線設定。
+// DatabaseConfig holds PostgreSQL connection settings.
 type DatabaseConfig struct {
 	DSN          string `mapstructure:"DB_DSN"`
 	MaxOpenConns int    `mapstructure:"DB_MAX_OPEN_CONNS"`
 	MaxIdleConns int    `mapstructure:"DB_MAX_IDLE_CONNS"`
 }
 
-// RedisConfig 為 Redis 連線設定（Cache 與 Stream 共用此 struct）。
+// RedisConfig holds Redis connection settings.
 type RedisConfig struct {
 	URL string
 }
 
-// Load 依照優先順序載入設定：
-// 內建預設值 → .env 檔 → 系統環境變數。
+// Load configuration following this priority:
+// Default values -> .env file -> Environment variables.
 func Load() (*Config, error) {
 	v := viper.New()
 
-	// 1. 設定預設值
+	// 1. Set default values
 	v.SetDefault("APP_ENV", "development")
 	v.SetDefault("APP_LOG_LEVEL", "info")
 	v.SetDefault("PORT", "8080")
@@ -54,15 +54,15 @@ func Load() (*Config, error) {
 	v.SetDefault("REDIS_CACHE_URL", "redis://localhost:6379/0")
 	v.SetDefault("REDIS_STREAM_URL", "redis://localhost:6379/1")
 
-	// 2. 嘗試讀取 .env 檔（本地開發用，不存在時忽略）
+	// 2. Read .env file (optional, for local development)
 	v.SetConfigFile(".env")
 	v.SetConfigType("env")
-	_ = v.ReadInConfig() // 忽略 "file not found" error，生產環境不需要此檔
+	_ = v.ReadInConfig() // Ignore "file not found" error as .env is not required in production
 
-	// 3. 自動映射系統環境變數（環境變數優先於 .env）
+	// 3. Automatically map environment variables (overrides .env)
 	v.AutomaticEnv()
 
-	// 4. 解析至結構體
+	// 4. Parse configuration into structs
 	cfg := &Config{}
 	cfg.App = AppConfig{
 		Env:      v.GetString("APP_ENV"),
@@ -75,7 +75,7 @@ func Load() (*Config, error) {
 	cfg.Database = DatabaseConfig{
 		DSN:          v.GetString("DB_DSN"),
 		MaxOpenConns: v.GetInt("DB_MAX_OPEN_CONNS"),
-		MaxIdleConns: v.GetInt("DB_MAX_IDLE_CONNS"),
+		MaxIdleConns: v.GetInt("DB_MAX_IDLE_CONns"),
 	}
 	cfg.Cache = RedisConfig{
 		URL: v.GetString("REDIS_CACHE_URL"),
@@ -84,7 +84,7 @@ func Load() (*Config, error) {
 		URL: v.GetString("REDIS_STREAM_URL"),
 	}
 
-	// 5. 驗證必填欄位
+	// 5. Validate required fields
 	if cfg.Database.DSN == "" {
 		return nil, fmt.Errorf("DB_DSN is required")
 	}

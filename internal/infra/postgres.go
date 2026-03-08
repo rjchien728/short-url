@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPool 建立並回傳一個 pgxpool.Pool，依照 DatabaseConfig 設定連線參數。
+// NewPool creates and returns a pgxpool.Pool based on DatabaseConfig.
 func NewPool(ctx context.Context, cfg DatabaseConfig) (*pgxpool.Pool, error) {
 	if cfg.DSN == "" {
 		return nil, fmt.Errorf("database DSN is required")
@@ -19,7 +19,7 @@ func NewPool(ctx context.Context, cfg DatabaseConfig) (*pgxpool.Pool, error) {
 	}
 
 	poolCfg.MaxConns = int32(cfg.MaxOpenConns) //nolint:gosec
-	// pgx v5 沒有 MaxIdleConns，以 MinConns 對應（確保至少保有 idle 連線）
+	// pgx v5 uses MinConns as an equivalent to MaxIdleConns.
 	if cfg.MaxIdleConns > 0 {
 		poolCfg.MinConns = int32(cfg.MaxIdleConns) //nolint:gosec
 	}
@@ -29,7 +29,7 @@ func NewPool(ctx context.Context, cfg DatabaseConfig) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("create pgxpool: %w", err)
 	}
 
-	// 驗證連線是否可用
+	// Validate connection
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping database: %w", err)

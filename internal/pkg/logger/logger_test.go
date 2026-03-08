@@ -73,7 +73,7 @@ func TestWithLogger_FromContext(t *testing.T) {
 		got := FromContext(ctx)
 		require.NotNil(t, got)
 
-		// 寫入 log 後確認是寫到 buf（同一個 handler）
+		// Verify log is written to the same buffer handler.
 		got.Info("test-message")
 		assert.Contains(t, buf.String(), "test-message")
 	})
@@ -82,7 +82,7 @@ func TestWithLogger_FromContext(t *testing.T) {
 		ctx := context.Background()
 		got := FromContext(ctx)
 		require.NotNil(t, got)
-		// 沒有 panic 即可，回傳 slog.Default()
+		// Ensure it doesn't panic and returns slog.Default().
 		assert.Equal(t, slog.Default(), got)
 	})
 
@@ -135,7 +135,7 @@ func TestParseLevel(t *testing.T) {
 }
 
 func TestLogFunctions_DoNotPanic(t *testing.T) {
-	// 確認四個 log 函數在各種情況下不 panic
+	// Verify log functions do not panic in various scenarios.
 	buf := &bytes.Buffer{}
 	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	ctx := WithLogger(context.Background(), l)

@@ -13,15 +13,15 @@ import (
 )
 
 func main() {
-	// 載入 .env 檔案
+	// Load .env file
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
 	}
 
-	// 從環境變數獲取 DSN
+	// Get DSN from environment variables
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
-		// 如果沒有直接提供 DSN，則從個別變數組合
+		// Construct DSN if not directly provided
 		user := os.Getenv("DB_USER")
 		pass := os.Getenv("DB_PASSWORD")
 		host := "localhost"
@@ -38,7 +38,7 @@ func main() {
 		log.Fatalf("Failed to initialize migration: %v", err)
 	}
 
-	// 處理指令
+	// Handle commands
 	flag.Parse()
 	command := flag.Arg(0)
 

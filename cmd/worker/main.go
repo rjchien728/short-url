@@ -1,5 +1,5 @@
 package main
 
 func main() {
-	// Phase 7 實作
+	// Phase 7 Implementation
 }
