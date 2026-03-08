@@ -15,7 +15,7 @@
 | Phase 2 | 工具層（internal/pkg） | ✅ 完成 | `c3fd067` |
 | Phase 3 | Domain 合約層 | ✅ 完成 | `c3fd067` |
 | Phase 4 | 被驅動層（Repository & Gateway） | ✅ 完成 | `991d697` |
-| Phase 5 | 服務層（Service） | 🔲 待開發 | — |
+| Phase 5 | 服務層（Service） | ✅ 完成 | `096727e` |
 | Phase 6 | 驅動層 — HTTP Handler | 🔲 待開發 | — |
 | Phase 7 | 驅動層 — Redis Stream Consumer | 🔲 待開發 | — |
 | Phase 8 | E2E 驗收 | 🔲 待開發 | — |
@@ -54,6 +54,17 @@
 - 整合測試：local DB via `DB_DSN`（shorturl/clicklog）、miniredis（urlcache/eventpub）、httptest（ogfetch）
 - 注意：squirrel SQL builder 未採用，改用 raw SQL + pgx，依賴更輕量
 
+#### Phase 5（commit `096727e`）
+- `go.uber.org/mock` + `mockgen` CLI 安裝；Makefile 加入 `make mock` target
+- `//go:generate mockgen` 指令加入 `repository.go`、`gateway.go`、`snowflake.go`
+- `internal/mock/`：集中式 mock 目錄，包含 `MockShortURLRepository`、`MockClickLogRepository`、`MockURLCache`、`MockEventPublisher`、`MockOGFetcher`、`MockIDGenerator`
+- `entity.OGFetchTask` 新增 `RetryCount int` 欄位；`eventpub.PublishOGFetchTask` 同步加入 `retry_count` stream field
+- `internal/service/url/impl.go`（package `urlsvc`）：建立短網址，unique violation 最多 retry 3 次，Publisher 失敗只 log
+- `internal/service/redirect/impl.go`：cache-first Resolve，cache miss 自動 backfill，RecordClick fire-and-forget
+- `internal/service/ogworker/impl.go`：fetch 失敗重新入隊（`RetryCount+1`）而非 sleep，達上限（3 次）標記 `FetchFailed: true`
+- `internal/service/clickworker/impl.go`：直接委派 `repo.BatchCreate()`，error 由 consumer PEL 機制重試
+- 17 個 unit test cases，全部通過；`go build ./...` 無錯誤
+
 ### 開發環境備註
 
 - devcontainer 環境：透過 `host.docker.internal` 連接外部 Docker 服務（PostgreSQL / Redis）
@@ -69,7 +80,7 @@
 | :--- | :--- | :--- | :--- |
 | `internal/pkg/` | Unit test | testify | 否 |
 | `internal/domain/` | Build check | `go build` | 否 |
-| `internal/service/` | Unit test | testify/mock（手寫 stub） | 否 |
+| `internal/service/` | Unit test | gomock（`go.uber.org/mock`） | 否 |
 | `internal/handler/` | Unit test | echo httptest | 否 |
 | `internal/repository/shorturl/`、`/clicklog/` | Integration test | local PostgreSQL（`DB_DSN`） | **是（需 migrate-up）** |
 | `internal/repository/urlcache/`、`/eventpub/` | Integration test | miniredis（in-process） | 否 |
