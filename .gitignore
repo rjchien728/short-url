@@ -1,0 +1,12 @@
+# Local development config (contains secrets)
+.env
+
+# Go build output
+/bin/
+*.exe
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
