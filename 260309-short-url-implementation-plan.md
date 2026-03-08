@@ -45,19 +45,71 @@
 - `internal/domain/repository/repository.go`：4 個 repository interfaces
 - `internal/domain/gateway/gateway.go`：`OGFetcher` interface
 
-#### Phase 4（commit `991d697`）
+#### Phase 4（commit `991d697`, `1675595`）
 - `internal/repository/shorturl/impl.go`：raw SQL + pgx，含 JSONB 解析，查無結果回傳 `ErrNotFound`
 - `internal/repository/clicklog/impl.go`：動態 multi-row INSERT
 - `internal/repository/urlcache/impl.go`：JSON 序列化，TTL 24h，cache miss 回傳 `(nil, nil)`
 - `internal/repository/eventpub/impl.go`：XADD 至 `stream:og-fetch` / `stream:click-log`，欄位格式符合 API spec
 - `internal/gateway/ogfetch/impl.go`：HTTP GET + `x/net/html` tokenizer 解析 OG tags
-- 整合測試：testcontainers-go（shorturl/clicklog）、miniredis（urlcache/eventpub）、httptest（ogfetch）
+- 整合測試：local DB via `DB_DSN`（shorturl/clicklog）、miniredis（urlcache/eventpub）、httptest（ogfetch）
 - 注意：squirrel SQL builder 未採用，改用 raw SQL + pgx，依賴更輕量
 
 ### 開發環境備註
 
 - devcontainer 環境：透過 `host.docker.internal` 連接外部 Docker 服務（PostgreSQL / Redis）
 - `.env` 中的 `DB_DSN`、`REDIS_CACHE_URL`、`REDIS_STREAM_URL` 皆使用 `host.docker.internal` host
+
+---
+
+## 測試策略
+
+### 分層測試方式
+
+| 層 | 測試類型 | 工具 | 需要外部服務 |
+| :--- | :--- | :--- | :--- |
+| `internal/pkg/` | Unit test | testify | 否 |
+| `internal/domain/` | Build check | `go build` | 否 |
+| `internal/service/` | Unit test | testify/mock（手寫 stub） | 否 |
+| `internal/handler/` | Unit test | echo httptest | 否 |
+| `internal/repository/shorturl/`、`/clicklog/` | Integration test | local PostgreSQL（`DB_DSN`） | **是（需 migrate-up）** |
+| `internal/repository/urlcache/`、`/eventpub/` | Integration test | miniredis（in-process） | 否 |
+| `internal/gateway/ogfetch/` | Integration test | `httptest.NewServer` | 否 |
+| `internal/consumer/` | Integration test | miniredis（in-process） | 否 |
+
+### 測試指令
+
+```bash
+make test                # 只跑不需要外部服務的測試（unit + miniredis + httptest）
+make test-integration    # 跑所有 repository/gateway 整合測試（需先 make migrate-up）
+```
+
+### PostgreSQL 整合測試規則
+
+- 連線字串從 `DB_DSN` 環境變數讀取（`.env` 已設定，Makefile 自動 export）
+- `DB_DSN` 未設時測試自動 `t.Skip()`，不會 false fail
+- 每個 test case 前執行 `TRUNCATE` 清資料，確保測試互相獨立
+- 測試驗證的是「Go code 是否相容最新 migration 後的 schema」，schema 單一來源為 `migrations/` 目錄
+
+### Redis 整合測試規則
+
+- `urlcache`、`eventpub`、`consumer` 使用 [miniredis](https://github.com/alicebob/miniredis)（純 Go in-process Redis 模擬器）
+- 不需要 Docker，CI 無額外前置條件
+- 每個 test case 前執行 `FlushAll()` 清資料
+
+### CI 前置條件（未來接 GitHub Actions）
+
+```yaml
+services:
+  postgres:
+    image: postgres:17-alpine
+    env: { POSTGRES_DB: shorturl, POSTGRES_USER: user, POSTGRES_PASSWORD: password }
+  redis:
+    image: redis:7-alpine
+
+steps:
+  - run: make migrate-up
+  - run: make test-integration
+```
 
 ---
 
@@ -82,7 +134,7 @@
 | 資料庫          | PostgreSQL 17                        |
 | 快取 / 訊息隊列 | Redis 7（Cache DB 0 / Streams DB 1） |
 | Config          | Viper                                |
-| DB Client       | pgx v5 + squirrel                    |
+| DB Client       | pgx v5（raw SQL）                    |
 | Logger          | slog（stdlib）                       |
 
 ### 系統架構概述
