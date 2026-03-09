@@ -105,6 +105,19 @@ func TestWithLogger_FromContext(t *testing.T) {
 	})
 }
 
+func TestWith(t *testing.T) {
+	buf := &bytes.Buffer{}
+	l := slog.New(slog.NewTextHandler(buf, nil))
+	ctx := WithLogger(context.Background(), l)
+
+	ctxWithAttr := With(ctx, "trace_id", "12345")
+	Info(ctxWithAttr, "test message")
+
+	output := buf.String()
+	assert.Contains(t, output, "test message")
+	assert.Contains(t, output, "trace_id=12345")
+}
+
 func TestParseLevel(t *testing.T) {
 	tests := []struct {
 		desc          string

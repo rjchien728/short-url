@@ -3,7 +3,6 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/domain/service"
+	"github.com/rjchien728/short-url/internal/pkg/logger"
 )
 
 const (
@@ -48,12 +48,12 @@ func NewOGConsumer(rdb *redis.Client, svc service.OGWorkerService, groupName, co
 // Run starts the main read loop. It blocks until ctx is cancelled.
 // On each iteration it reads one message, processes it, and always ACKs.
 func (c *OGConsumer) Run(ctx context.Context) error {
-	slog.Info("og_consumer: started", "group", c.groupName, "consumer", c.consumer)
+	logger.Info(ctx, "og_consumer: started", "group", c.groupName, "consumer", c.consumer)
 	for {
 		// Check for cancellation before blocking.
 		select {
 		case <-ctx.Done():
-			slog.Info("og_consumer: stopped")
+			logger.Info(ctx, "og_consumer: stopped")
 			return nil
 		default:
 		}
@@ -72,10 +72,10 @@ func (c *OGConsumer) Run(ctx context.Context) error {
 			}
 			// context cancelled while blocking — clean exit.
 			if ctx.Err() != nil {
-				slog.Info("og_consumer: stopped")
+				logger.Info(ctx, "og_consumer: stopped")
 				return nil
 			}
-			slog.Error("og_consumer: XREADGROUP error", "error", err)
+			logger.Error(ctx, "og_consumer: XREADGROUP error", "error", err)
 			continue
 		}
 
@@ -92,17 +92,17 @@ func (c *OGConsumer) Run(ctx context.Context) error {
 func (c *OGConsumer) processMessage(ctx context.Context, msg redis.XMessage) {
 	task, err := parseOGFetchTask(msg)
 	if err != nil {
-		slog.Error("og_consumer: parse message failed, ACKing to avoid queue block",
+		logger.Error(ctx, "og_consumer: parse message failed, ACKing to avoid queue block",
 			"msg_id", msg.ID, "error", err)
 		c.ack(ctx, msg.ID)
 		return
 	}
 
 	if err := c.ogService.ProcessTask(ctx, task); err != nil {
-		slog.Error("og_consumer: ProcessTask failed, ACKing (non-fatal)",
+		logger.Error(ctx, "og_consumer: ProcessTask failed, ACKing (non-fatal)",
 			"msg_id", msg.ID, "short_url_id", task.ShortURLID, "error", err)
 	} else {
-		slog.Info("og_consumer: task processed",
+		logger.Info(ctx, "og_consumer: task processed",
 			"msg_id", msg.ID, "short_url_id", task.ShortURLID, "long_url", task.LongURL)
 	}
 
@@ -113,7 +113,7 @@ func (c *OGConsumer) processMessage(ctx context.Context, msg redis.XMessage) {
 // ack sends XACK for a single message; logs but does not return errors.
 func (c *OGConsumer) ack(ctx context.Context, msgID string) {
 	if err := c.rdb.XAck(ctx, ogStream, c.groupName, msgID).Err(); err != nil {
-		slog.Error("og_consumer: XACK failed", "msg_id", msgID, "error", err)
+		logger.Error(ctx, "og_consumer: XACK failed", "msg_id", msgID, "error", err)
 	}
 }
 

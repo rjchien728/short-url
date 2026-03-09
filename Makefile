@@ -64,7 +64,7 @@ test: ## Run unit tests only (no DB/Redis required)
 	go test -v -count=1 -timeout=30s $(shell go list ./... | grep -v 'repository/shorturl\|repository/clicklog\|internal/consumer')
 
 test-integration: ## Run integration tests against local DB and Redis (requires migrate-up first)
-	go test -v -count=1 -timeout=120s ./internal/repository/... ./internal/gateway/... ./internal/consumer/...
+	go test -v -count=1 -timeout=30s ./internal/repository/... ./internal/gateway/... ./internal/consumer/...
 
 lint: ## Run linter (requires golangci-lint)
 	golangci-lint run

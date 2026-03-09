@@ -76,6 +76,12 @@ func FromContext(ctx context.Context) *slog.Logger {
 	return fromContext(ctx)
 }
 
+// With returns a new context with a logger that has the given attributes.
+func With(ctx context.Context, args ...any) context.Context {
+	l := fromContext(ctx).With(args...)
+	return WithLogger(ctx, l)
+}
+
 // log is an internal helper that captures the correct caller location.
 // It uses runtime.Callers to skip 3 frames [Callers, log, Info/Debug/Error/Warn]
 // so that AddSource points to the actual caller, not this wrapper.

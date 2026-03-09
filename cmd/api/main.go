@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,33 +27,33 @@ func main() {
 	// --- Config ---
 	cfg, err := infra.Load()
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
+		logger.Error(ctx, "failed to load config", "error", err)
 		os.Exit(1)
 	}
 
 	// --- Logger ---
 	if err := logger.Setup(cfg.App.LogLevel, "text"); err != nil {
-		slog.Warn("logger setup failed, using defaults", "error", err)
+		logger.Warn(ctx, "logger setup failed, using defaults", "error", err)
 	}
 
 	// --- Infrastructure ---
 	dbPool, err := infra.NewPool(ctx, cfg.Database)
 	if err != nil {
-		slog.Error("failed to connect to postgres", "error", err)
+		logger.Error(ctx, "failed to connect to postgres", "error", err)
 		os.Exit(1)
 	}
 	defer dbPool.Close()
 
 	cacheRdb, err := infra.NewRedisClient(ctx, cfg.Cache)
 	if err != nil {
-		slog.Error("failed to connect to redis cache", "error", err)
+		logger.Error(ctx, "failed to connect to redis cache", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = cacheRdb.Close() }()
 
 	streamRdb, err := infra.NewRedisClient(ctx, cfg.Stream)
 	if err != nil {
-		slog.Error("failed to connect to redis stream", "error", err)
+		logger.Error(ctx, "failed to connect to redis stream", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = streamRdb.Close() }()
@@ -81,7 +80,7 @@ func main() {
 	// --- Graceful Shutdown ---
 	go func() {
 		if err := e.Start(":" + cfg.Server.Port); err != nil && err != http.ErrServerClosed {
-			slog.Error("server error", "error", err)
+			logger.Error(ctx, "server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -90,14 +89,14 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	slog.Info("shutting down api server...")
+	logger.Info(ctx, "shutting down api server...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := e.Shutdown(shutdownCtx); err != nil {
-		slog.Error("server shutdown failed", "error", err)
+		logger.Error(shutdownCtx, "server shutdown failed", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("api server stopped")
+	logger.Info(ctx, "api server stopped")
 }

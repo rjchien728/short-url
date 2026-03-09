@@ -3,7 +3,6 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/domain/service"
+	"github.com/rjchien728/short-url/internal/pkg/logger"
 )
 
 const (
@@ -55,7 +55,7 @@ func NewClickConsumer(rdb *redis.Client, svc service.ClickWorkerService, groupNa
 // Run starts the main read loop and the XCLAIM goroutine concurrently.
 // Both goroutines exit when ctx is cancelled.
 func (c *ClickConsumer) Run(ctx context.Context) error {
-	slog.Info("click_consumer: started", "group", c.groupName, "consumer", c.consumer)
+	logger.Info(ctx, "click_consumer: started", "group", c.groupName, "consumer", c.consumer)
 
 	// Start XCLAIM goroutine for periodic PEL reclaim.
 	go c.reclaimLoop(ctx)
@@ -63,7 +63,7 @@ func (c *ClickConsumer) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("click_consumer: stopped")
+			logger.Info(ctx, "click_consumer: stopped")
 			return nil
 		default:
 		}
@@ -80,10 +80,10 @@ func (c *ClickConsumer) Run(ctx context.Context) error {
 				continue
 			}
 			if ctx.Err() != nil {
-				slog.Info("click_consumer: stopped")
+				logger.Info(ctx, "click_consumer: stopped")
 				return nil
 			}
-			slog.Error("click_consumer: XREADGROUP error", "error", err)
+			logger.Error(ctx, "click_consumer: XREADGROUP error", "error", err)
 			continue
 		}
 
@@ -104,7 +104,7 @@ func (c *ClickConsumer) processBatch(ctx context.Context, msgs []redis.XMessage)
 		log, err := parseClickLog(msg)
 		if err != nil {
 			// Malformed message: ACK to avoid infinite retry, log for observability.
-			slog.Error("click_consumer: parse message failed, ACKing malformed message",
+			logger.Error(ctx, "click_consumer: parse message failed, ACKing malformed message",
 				"msg_id", msg.ID, "error", err)
 			_ = c.rdb.XAck(ctx, clickStream, c.groupName, msg.ID).Err()
 			continue
@@ -126,18 +126,18 @@ func (c *ClickConsumer) processBatch(ctx context.Context, msgs []redis.XMessage)
 
 	if err := c.clickService.ProcessBatch(ctx, logs); err != nil {
 		// Do NOT ACK — messages stay in PEL and will be retried via XCLAIM.
-		slog.Error("click_consumer: ProcessBatch failed, messages left in PEL",
+		logger.Error(ctx, "click_consumer: ProcessBatch failed, messages left in PEL",
 			"count", len(logs), "error", err)
 		return
 	}
 
 	// Success — ACK all messages in the batch.
 	if err := c.rdb.XAck(ctx, clickStream, c.groupName, ids...).Err(); err != nil {
-		slog.Error("click_consumer: XACK failed after successful batch",
+		logger.Error(ctx, "click_consumer: XACK failed after successful batch",
 			"count", len(ids), "error", err)
 		return
 	}
-	slog.Info("click_consumer: batch processed", "count", len(logs))
+	logger.Info(ctx, "click_consumer: batch processed", "count", len(logs))
 }
 
 // reclaimLoop runs on a fixed interval to reclaim idle PEL messages and move
@@ -168,7 +168,7 @@ func (c *ClickConsumer) reclaim(ctx context.Context) {
 		Idle:   idleThreshold,
 	}).Result()
 	if err != nil {
-		slog.Error("click_consumer: XPendingExt error", "error", err)
+		logger.Error(ctx, "click_consumer: XPendingExt error", "error", err)
 		return
 	}
 
@@ -187,7 +187,7 @@ func (c *ClickConsumer) reclaim(ctx context.Context) {
 			MinIdle:  idleThreshold,
 			Messages: []string{p.ID},
 		}).Err(); err != nil {
-			slog.Error("click_consumer: XClaim failed", "msg_id", p.ID, "error", err)
+			logger.Error(ctx, "click_consumer: XClaim failed", "msg_id", p.ID, "error", err)
 		}
 	}
 }
@@ -197,7 +197,7 @@ func (c *ClickConsumer) sendToDLQ(ctx context.Context, msgID string) {
 	// Read the original message to copy its payload to the DLQ.
 	msgs, err := c.rdb.XRange(ctx, clickStream, msgID, msgID).Result()
 	if err != nil || len(msgs) == 0 {
-		slog.Error("click_consumer: cannot read message for DLQ transfer",
+		logger.Error(ctx, "click_consumer: cannot read message for DLQ transfer",
 			"msg_id", msgID, "error", err)
 		// ACK anyway to avoid infinite loop.
 		_ = c.rdb.XAck(ctx, clickStream, c.groupName, msgID).Err()
@@ -210,15 +210,15 @@ func (c *ClickConsumer) sendToDLQ(ctx context.Context, msgID string) {
 		ID:     "*",
 		Values: msgs[0].Values,
 	}).Err(); err != nil {
-		slog.Error("click_consumer: failed to write to DLQ", "msg_id", msgID, "error", err)
+		logger.Error(ctx, "click_consumer: failed to write to DLQ", "msg_id", msgID, "error", err)
 	}
 
 	// ACK the original to remove it from PEL.
 	if err := c.rdb.XAck(ctx, clickStream, c.groupName, msgID).Err(); err != nil {
-		slog.Error("click_consumer: XACK after DLQ failed", "msg_id", msgID, "error", err)
+		logger.Error(ctx, "click_consumer: XACK after DLQ failed", "msg_id", msgID, "error", err)
 	}
 
-	slog.Error("click_consumer: message sent to DLQ (exceeded max delivery)",
+	logger.Error(ctx, "click_consumer: message sent to DLQ (exceeded max delivery)",
 		"msg_id", msgID, "dlq", clickDLQ)
 }
 

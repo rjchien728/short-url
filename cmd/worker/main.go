@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,27 +27,27 @@ func main() {
 	// --- Config ---
 	cfg, err := infra.Load()
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
+		logger.Error(ctx, "failed to load config", "error", err)
 		os.Exit(1)
 	}
 
 	// --- Logger ---
 	if err := logger.Setup(cfg.App.LogLevel, "text"); err != nil {
-		slog.Warn("logger setup failed, using defaults", "error", err)
+		logger.Warn(ctx, "logger setup failed, using defaults", "error", err)
 	}
 
 	// --- Infrastructure ---
 	// Worker only needs the stream Redis client (no cache Redis needed).
 	dbPool, err := infra.NewPool(ctx, cfg.Database)
 	if err != nil {
-		slog.Error("failed to connect to postgres", "error", err)
+		logger.Error(ctx, "failed to connect to postgres", "error", err)
 		os.Exit(1)
 	}
 	defer dbPool.Close()
 
 	streamRdb, err := infra.NewRedisClient(ctx, cfg.Stream)
 	if err != nil {
-		slog.Error("failed to connect to redis stream", "error", err)
+		logger.Error(ctx, "failed to connect to redis stream", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = streamRdb.Close() }()
@@ -85,7 +84,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-quit
-		slog.Info("shutting down worker...")
+		logger.Info(ctx, "shutting down worker...")
 		cancel()
 	}()
 
@@ -95,9 +94,9 @@ func main() {
 	g.Go(func() error { return clickC.Run(gCtx) })
 
 	if err := g.Wait(); err != nil {
-		slog.Error("worker stopped with error", "error", err)
+		logger.Error(gCtx, "worker stopped with error", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("worker stopped")
+	logger.Info(ctx, "worker stopped")
 }

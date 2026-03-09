@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -9,7 +8,7 @@ import (
 )
 
 // Middleware returns an echo middleware that sets up request-scoped logging.
-// It injects a request_id and a pre-configured slog.Logger into the request context,
+// It injects a request_id and a pre-configured logger into the request context,
 // then logs the request start and completion with status code and duration.
 func Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -17,15 +16,12 @@ func Middleware() echo.MiddlewareFunc {
 			start := time.Now()
 			requestID := uuid.New().String()
 
-			// Create a logger with request metadata
-			reqLogger := slog.Default().With(
+			// Create a logger with request metadata and inject into context
+			ctx := With(c.Request().Context(),
 				"request_id", requestID,
 				"method", c.Request().Method,
 				"path", c.Request().URL.Path,
 			)
-
-			// Inject logger into request context
-			ctx := WithLogger(c.Request().Context(), reqLogger)
 			c.SetRequest(c.Request().WithContext(ctx))
 
 			Info(ctx, "request started")
