@@ -12,6 +12,7 @@ import (
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/domain/service"
 	"github.com/rjchien728/short-url/internal/pkg/logger"
+	"github.com/rjchien728/short-url/internal/pkg/streamkey"
 )
 
 const (
@@ -83,7 +84,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	go c.reclaimLoop(ctx)
 
 	return consumer.RunLoop(ctx, c.rdb, consumer.RunLoopOptions{
-		Stream:       consumer.ClickStream,
+		Stream:       streamkey.ClickLog,
 		Group:        c.groupName,
 		Consumer:     c.consumer,
 		Count:        c.batchSize,
@@ -96,29 +97,25 @@ func (c *Consumer) Run(ctx context.Context) error {
 // It parses messages, calls ProcessBatch, and ACKs only on success.
 // On failure the messages stay in the PEL for retry via XCLAIM.
 func (c *Consumer) ProcessMessages(ctx context.Context, rdb *redis.Client, msgs []redis.XMessage) error {
+	// Parse messages and collect valid logs with their IDs in a single pass.
+	// logs and ids are strictly 1:1 — malformed messages are ACKed immediately and skipped.
 	logs := make([]*entity.ClickLog, 0, len(msgs))
+	ids := make([]string, 0, len(msgs))
 	for _, msg := range msgs {
 		log, err := parseClickLog(msg)
 		if err != nil {
 			// Malformed message: ACK immediately to avoid infinite retry.
 			logger.Error(ctx, "click_consumer: parse failed, ACKing malformed message",
 				"msg_id", msg.ID, "error", err)
-			_ = rdb.XAck(ctx, consumer.ClickStream, c.groupName, msg.ID).Err()
+			_ = rdb.XAck(ctx, streamkey.ClickLog, c.groupName, msg.ID).Err()
 			continue
 		}
 		logs = append(logs, log)
+		ids = append(ids, msg.ID)
 	}
 
 	if len(logs) == 0 {
 		return nil
-	}
-
-	// Collect IDs only for successfully parsed messages.
-	ids := make([]string, 0, len(logs))
-	for i, msg := range msgs {
-		if i < len(logs) {
-			ids = append(ids, msg.ID)
-		}
 	}
 
 	if err := c.clickService.ProcessBatch(ctx, logs); err != nil {
@@ -129,7 +126,7 @@ func (c *Consumer) ProcessMessages(ctx context.Context, rdb *redis.Client, msgs 
 	}
 
 	// Success — ACK all messages in the batch.
-	if err := rdb.XAck(ctx, consumer.ClickStream, c.groupName, ids...).Err(); err != nil {
+	if err := rdb.XAck(ctx, streamkey.ClickLog, c.groupName, ids...).Err(); err != nil {
 		logger.Error(ctx, "click_consumer: XACK failed after successful batch",
 			"count", len(ids), "error", err)
 		return nil
@@ -158,7 +155,7 @@ func (c *Consumer) reclaimLoop(ctx context.Context) {
 // retry or moves them to the DLQ if delivery count exceeds maxDelivery.
 func (c *Consumer) reclaim(ctx context.Context) {
 	pending, err := c.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		Group:  c.groupName,
 		Start:  "-",
 		End:    "+",
@@ -179,7 +176,7 @@ func (c *Consumer) reclaim(ctx context.Context) {
 
 		// Reclaim the message so this consumer can retry it.
 		if err := c.rdb.XClaim(ctx, &redis.XClaimArgs{
-			Stream:   consumer.ClickStream,
+			Stream:   streamkey.ClickLog,
 			Group:    c.groupName,
 			Consumer: c.consumer,
 			MinIdle:  c.idleThreshold,
@@ -193,18 +190,18 @@ func (c *Consumer) reclaim(ctx context.Context) {
 // sendToDLQ moves a message to stream:click-dlq, then ACKs it from the main stream.
 func (c *Consumer) sendToDLQ(ctx context.Context, msgID string) {
 	// Read the original message to copy its payload to the DLQ.
-	msgs, err := c.rdb.XRange(ctx, consumer.ClickStream, msgID, msgID).Result()
+	msgs, err := c.rdb.XRange(ctx, streamkey.ClickLog, msgID, msgID).Result()
 	if err != nil || len(msgs) == 0 {
 		logger.Error(ctx, "click_consumer: cannot read message for DLQ transfer",
 			"msg_id", msgID, "error", err)
 		// ACK anyway to avoid an infinite loop.
-		_ = c.rdb.XAck(ctx, consumer.ClickStream, c.groupName, msgID).Err()
+		_ = c.rdb.XAck(ctx, streamkey.ClickLog, c.groupName, msgID).Err()
 		return
 	}
 
 	// Write to DLQ with original payload preserved.
 	if err := c.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: consumer.ClickDLQ,
+		Stream: streamkey.ClickDLQ,
 		ID:     "*",
 		Values: msgs[0].Values,
 	}).Err(); err != nil {
@@ -212,12 +209,12 @@ func (c *Consumer) sendToDLQ(ctx context.Context, msgID string) {
 	}
 
 	// ACK the original to remove it from PEL.
-	if err := c.rdb.XAck(ctx, consumer.ClickStream, c.groupName, msgID).Err(); err != nil {
+	if err := c.rdb.XAck(ctx, streamkey.ClickLog, c.groupName, msgID).Err(); err != nil {
 		logger.Error(ctx, "click_consumer: XACK after DLQ failed", "msg_id", msgID, "error", err)
 	}
 
 	logger.Error(ctx, "click_consumer: message sent to DLQ (exceeded max delivery)",
-		"msg_id", msgID, "dlq", consumer.ClickDLQ)
+		"msg_id", msgID, "dlq", streamkey.ClickDLQ)
 }
 
 // parseClickLog converts a raw Redis stream message to an entity.ClickLog.

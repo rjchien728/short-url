@@ -9,11 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/rjchien728/short-url/internal/domain/entity"
-)
-
-const (
-	ogStream    = "stream:og-fetch"
-	clickStream = "stream:click-log"
+	"github.com/rjchien728/short-url/internal/pkg/streamkey"
 )
 
 // Publisher implements domain/repository.EventPublisher using Redis Streams.
@@ -30,7 +26,7 @@ func NewPublisher(rdb *redis.Client) *Publisher {
 // retry_count tracks how many fetch attempts have been made; consumer re-enqueues on failure.
 func (p *Publisher) PublishOGFetchTask(ctx context.Context, task *entity.OGFetchTask) error {
 	err := p.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: ogStream,
+		Stream: streamkey.OGFetch,
 		ID:     "*",
 		Values: map[string]any{
 			"short_url_id": strconv.FormatInt(task.ShortURLID, 10),
@@ -47,7 +43,7 @@ func (p *Publisher) PublishOGFetchTask(ctx context.Context, task *entity.OGFetch
 // PublishClickEvent sends a click log event to the stream:click-log stream.
 func (p *Publisher) PublishClickEvent(ctx context.Context, event *entity.ClickLog) error {
 	err := p.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: clickStream,
+		Stream: streamkey.ClickLog,
 		ID:     "*",
 		Values: map[string]any{
 			"id":           event.ID,

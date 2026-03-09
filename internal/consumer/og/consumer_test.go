@@ -21,10 +21,10 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rjchien728/short-url/internal/consumer"
 	ogconsumer "github.com/rjchien728/short-url/internal/consumer/og"
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/mock"
+	"github.com/rjchien728/short-url/internal/pkg/streamkey"
 )
 
 const testConsumerName = "test-og-consumer"
@@ -58,7 +58,7 @@ func (s *ConsumerSuite) TearDownSuite() {
 
 func (s *ConsumerSuite) SetupTest() {
 	ctx := context.Background()
-	s.rdb.Del(ctx, consumer.OGStream)
+	s.rdb.Del(ctx, streamkey.OGFetch)
 }
 
 // newConsumer creates a fresh Consumer with a unique group name per test to avoid PEL collisions.
@@ -73,7 +73,7 @@ func (s *ConsumerSuite) newConsumer(svc interface {
 // publishOGTask writes a raw og-fetch message to the stream.
 func (s *ConsumerSuite) publishOGTask(ctx context.Context, shortURLID int64, longURL string, retryCount int) string {
 	res, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: consumer.OGStream,
+		Stream: streamkey.OGFetch,
 		ID:     "*",
 		Values: map[string]any{
 			"short_url_id": "1001",
@@ -120,7 +120,7 @@ func (s *ConsumerSuite) TestProcessTask_Success() {
 
 	// Verify the message is no longer in PEL (was ACKed).
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.OGStream,
+		Stream: streamkey.OGFetch,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -162,7 +162,7 @@ func (s *ConsumerSuite) TestProcessTask_ServiceError() {
 
 	// Verify message was ACKed despite the service error.
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.OGStream,
+		Stream: streamkey.OGFetch,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -195,7 +195,7 @@ func (s *ConsumerSuite) TestProcessTask_ParsedCorrectly() {
 	c := s.newConsumer(svc, groupName)
 
 	_, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: consumer.OGStream,
+		Stream: streamkey.OGFetch,
 		ID:     "*",
 		Values: map[string]any{
 			"short_url_id": "9999",

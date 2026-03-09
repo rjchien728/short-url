@@ -16,43 +16,56 @@ func TestSetup(t *testing.T) {
 		desc        string
 		level       string
 		format      string
+		name        string
 		expectedErr bool
 	}{
 		{
 			desc:        "valid debug level text format",
 			level:       "debug",
 			format:      "text",
+			name:        "",
 			expectedErr: false,
 		},
 		{
 			desc:        "valid info level json format",
 			level:       "info",
 			format:      "json",
+			name:        "",
 			expectedErr: false,
 		},
 		{
 			desc:        "valid warn level",
 			level:       "warn",
 			format:      "text",
+			name:        "",
 			expectedErr: false,
 		},
 		{
 			desc:        "valid error level case-insensitive",
 			level:       "ERROR",
 			format:      "text",
+			name:        "",
+			expectedErr: false,
+		},
+		{
+			desc:        "with service name attaches name field",
+			level:       "info",
+			format:      "text",
+			name:        "api",
 			expectedErr: false,
 		},
 		{
 			desc:        "unknown level returns error",
 			level:       "verbose",
 			format:      "text",
+			name:        "",
 			expectedErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			err := Setup(tt.level, tt.format)
+			err := Setup(tt.level, tt.format, tt.name)
 			if tt.expectedErr {
 				assert.Error(t, err)
 			} else {

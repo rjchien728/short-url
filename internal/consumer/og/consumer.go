@@ -12,6 +12,7 @@ import (
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/domain/service"
 	"github.com/rjchien728/short-url/internal/pkg/logger"
+	"github.com/rjchien728/short-url/internal/pkg/streamkey"
 )
 
 const defaultBlockTimeout = 5 * time.Second
@@ -48,7 +49,7 @@ func (c *Consumer) WithBlockTimeout(d time.Duration) *Consumer {
 // Run starts the main read loop. It blocks until ctx is cancelled.
 func (c *Consumer) Run(ctx context.Context) error {
 	return consumer.RunLoop(ctx, c.rdb, consumer.RunLoopOptions{
-		Stream:       consumer.OGStream,
+		Stream:       streamkey.OGFetch,
 		Group:        c.groupName,
 		Consumer:     c.consumer,
 		Count:        1,
@@ -91,7 +92,7 @@ func (c *Consumer) processMessage(ctx context.Context, rdb *redis.Client, msg re
 
 // ack sends XACK for a single message; logs but does not return errors.
 func (c *Consumer) ack(ctx context.Context, rdb *redis.Client, msgID string) {
-	if err := rdb.XAck(ctx, consumer.OGStream, c.groupName, msgID).Err(); err != nil {
+	if err := rdb.XAck(ctx, streamkey.OGFetch, c.groupName, msgID).Err(); err != nil {
 		logger.Error(ctx, "og_consumer: XACK failed", "msg_id", msgID, "error", err)
 	}
 }

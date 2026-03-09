@@ -22,10 +22,10 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rjchien728/short-url/internal/consumer"
 	clickconsumer "github.com/rjchien728/short-url/internal/consumer/click"
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/mock"
+	"github.com/rjchien728/short-url/internal/pkg/streamkey"
 )
 
 const testConsumerName = "test-click-consumer"
@@ -59,7 +59,7 @@ func (s *ConsumerSuite) TearDownSuite() {
 
 func (s *ConsumerSuite) SetupTest() {
 	ctx := context.Background()
-	s.rdb.Del(ctx, consumer.ClickStream, consumer.ClickDLQ)
+	s.rdb.Del(ctx, streamkey.ClickLog, streamkey.ClickDLQ)
 }
 
 // newConsumer creates a Consumer with a unique group name per test.
@@ -74,7 +74,7 @@ func (s *ConsumerSuite) newConsumer(svc interface {
 // publishClickEvent writes a well-formed click event to the stream.
 func (s *ConsumerSuite) publishClickEvent(ctx context.Context, id string) string {
 	msgID, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		ID:     "*",
 		Values: map[string]any{
 			"id":           id,
@@ -126,7 +126,7 @@ func (s *ConsumerSuite) TestProcessBatch_Success() {
 
 	// Verify message was ACKed (PEL should be empty).
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -168,7 +168,7 @@ func (s *ConsumerSuite) TestProcessBatch_Failure() {
 
 	// Message should still be in PEL (not ACKed).
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -203,7 +203,7 @@ func (s *ConsumerSuite) TestProcessBatch_ParsedCorrectly() {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		ID:     "*",
 		Values: map[string]any{
 			"id":           "test-uuid-parse",
@@ -266,7 +266,7 @@ func (s *ConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	groupName := "test-click-dlq-group"
 
 	// Ensure group exists before publishing.
-	_ = s.rdb.XGroupCreateMkStream(ctx, consumer.ClickStream, groupName, "0").Err()
+	_ = s.rdb.XGroupCreateMkStream(ctx, streamkey.ClickLog, groupName, "0").Err()
 
 	// Publish a message.
 	msgID := s.publishClickEvent(ctx, "click-dlq-test")
@@ -276,14 +276,14 @@ func (s *ConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	_, _ = s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    groupName,
 		Consumer: "dummy-consumer-0",
-		Streams:  []string{consumer.ClickStream, ">"},
+		Streams:  []string{streamkey.ClickLog, ">"},
 		Count:    1,
 		Block:    0,
 	}).Result()
 
 	for i := 0; i < 3; i++ {
 		_, _ = s.rdb.XClaim(ctx, &redis.XClaimArgs{
-			Stream:   consumer.ClickStream,
+			Stream:   streamkey.ClickLog,
 			Group:    groupName,
 			Consumer: fmt.Sprintf("dummy-consumer-%d", i+1),
 			MinIdle:  0,
@@ -293,7 +293,7 @@ func (s *ConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 
 	// Confirm delivery count is now > maxDelivery before starting consumer.
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -317,7 +317,7 @@ func (s *ConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	var dlqMsgs []redis.XMessage
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		dlqMsgs, _ = s.rdb.XRange(ctx, consumer.ClickDLQ, "-", "+").Result()
+		dlqMsgs, _ = s.rdb.XRange(ctx, streamkey.ClickDLQ, "-", "+").Result()
 		if len(dlqMsgs) > 0 {
 			break
 		}
@@ -332,7 +332,7 @@ func (s *ConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 
 	// Verify original is ACKed (no longer in PEL).
 	pendingAfter, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: consumer.ClickStream,
+		Stream: streamkey.ClickLog,
 		Group:  groupName,
 		Start:  msgID,
 		End:    msgID,
