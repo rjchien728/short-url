@@ -1,35 +1,35 @@
-package consumer
+package click
 
 import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/rjchien728/short-url/internal/consumer"
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/domain/service"
 	"github.com/rjchien728/short-url/internal/pkg/logger"
 )
 
 const (
-	// xclaimInterval is how often the XCLAIM goroutine runs to reclaim idle PEL messages.
-	xclaimInterval = 10 * time.Second
+	// defaultReclaimInterval is how often the reclaim goroutine runs.
+	defaultReclaimInterval = 10 * time.Second
 
-	// idleThreshold is the minimum idle time before a PEL message is reclaimed.
-	idleThreshold = 30 * time.Second
+	// defaultIdleThreshold is the minimum idle time before a PEL message is reclaimed.
+	defaultIdleThreshold = 30 * time.Second
 
-	// readBlockTimeout is the XReadGroup blocking duration.
-	readBlockTimeout = 5 * time.Second
+	// defaultBlockTimeout is the XReadGroup blocking duration.
+	defaultBlockTimeout = 5 * time.Second
 )
 
-// ClickConsumer reads click log events from stream:click-log in batches and
+// Consumer reads click log events from stream:click-log in batches and
 // delegates to ClickWorkerService. Failed batches are not ACKed so they stay
 // in the PEL for retry via XCLAIM. Messages that exceed maxDelivery are moved
 // to stream:click-dlq (dead letter queue) and then ACKed.
-type ClickConsumer struct {
+type Consumer struct {
 	rdb             *redis.Client
 	clickService    service.ClickWorkerService
 	groupName       string
@@ -41,116 +41,83 @@ type ClickConsumer struct {
 	blockTimeout    time.Duration // XReadGroup blocking duration
 }
 
-// NewClickConsumer creates a ClickConsumer and ensures the consumer group exists.
-// Panics if the group cannot be created (any error except BUSYGROUP).
-func NewClickConsumer(rdb *redis.Client, svc service.ClickWorkerService, groupName, consumerName string, batchSize, maxDelivery int) *ClickConsumer {
-	err := rdb.XGroupCreateMkStream(context.Background(), clickStream, groupName, "0").Err()
-	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-		panic(fmt.Sprintf("click_consumer: failed to create consumer group: %v", err))
-	}
-	return &ClickConsumer{
+// New creates a Consumer with the given parameters.
+func New(rdb *redis.Client, svc service.ClickWorkerService, groupName, consumerName string, batchSize, maxDelivery int) *Consumer {
+	return &Consumer{
 		rdb:             rdb,
 		clickService:    svc,
 		groupName:       groupName,
 		consumer:        consumerName,
 		batchSize:       int64(batchSize),
 		maxDelivery:     int64(maxDelivery),
-		reclaimInterval: xclaimInterval,
-		idleThreshold:   idleThreshold,
-		blockTimeout:    readBlockTimeout,
+		reclaimInterval: defaultReclaimInterval,
+		idleThreshold:   defaultIdleThreshold,
+		blockTimeout:    defaultBlockTimeout,
 	}
 }
 
 // WithReclaimInterval overrides the reclaim loop interval.
 // Intended for testing only.
-func (c *ClickConsumer) WithReclaimInterval(d time.Duration) *ClickConsumer {
+func (c *Consumer) WithReclaimInterval(d time.Duration) *Consumer {
 	c.reclaimInterval = d
 	return c
 }
 
 // WithIdleThreshold overrides the PEL idle threshold used in XPendingExt and XClaim.
 // Intended for testing only.
-func (c *ClickConsumer) WithIdleThreshold(d time.Duration) *ClickConsumer {
+func (c *Consumer) WithIdleThreshold(d time.Duration) *Consumer {
 	c.idleThreshold = d
 	return c
 }
 
 // WithBlockTimeout overrides the XReadGroup blocking duration.
 // Intended for testing only.
-func (c *ClickConsumer) WithBlockTimeout(d time.Duration) *ClickConsumer {
+func (c *Consumer) WithBlockTimeout(d time.Duration) *Consumer {
 	c.blockTimeout = d
 	return c
 }
 
-// Run starts the main read loop and the XCLAIM goroutine concurrently.
-// Both goroutines exit when ctx is cancelled.
-func (c *ClickConsumer) Run(ctx context.Context) error {
-	logger.Info(ctx, "click_consumer: started", "group", c.groupName, "consumer", c.consumer)
-
-	// Start XCLAIM goroutine for periodic PEL reclaim.
+// Run starts the main read loop and the reclaim goroutine concurrently.
+// Both exit when ctx is cancelled.
+func (c *Consumer) Run(ctx context.Context) error {
 	go c.reclaimLoop(ctx)
 
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info(ctx, "click_consumer: stopped")
-			return nil
-		default:
-		}
-
-		streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    c.groupName,
-			Consumer: c.consumer,
-			Streams:  []string{clickStream, ">"},
-			Count:    c.batchSize,
-			Block:    c.blockTimeout,
-		}).Result()
-		if err != nil {
-			if err == redis.Nil {
-				continue
-			}
-			if ctx.Err() != nil {
-				logger.Info(ctx, "click_consumer: stopped")
-				return nil
-			}
-			logger.Error(ctx, "click_consumer: XREADGROUP error", "error", err)
-			continue
-		}
-
-		for _, stream := range streams {
-			if len(stream.Messages) == 0 {
-				continue
-			}
-			c.processBatch(ctx, stream.Messages)
-		}
-	}
+	return consumer.RunLoop(ctx, c.rdb, consumer.RunLoopOptions{
+		Stream:       consumer.ClickStream,
+		Group:        c.groupName,
+		Consumer:     c.consumer,
+		Count:        c.batchSize,
+		BlockTimeout: c.blockTimeout,
+		Processor:    c,
+	})
 }
 
-// processBatch parses a slice of stream messages, calls ProcessBatch, and ACKs
-// only on success. On failure the messages stay in the PEL for retry.
-func (c *ClickConsumer) processBatch(ctx context.Context, msgs []redis.XMessage) {
+// ProcessMessages implements consumer.MessageProcessor.
+// It parses messages, calls ProcessBatch, and ACKs only on success.
+// On failure the messages stay in the PEL for retry via XCLAIM.
+func (c *Consumer) ProcessMessages(ctx context.Context, rdb *redis.Client, msgs []redis.XMessage) error {
 	logs := make([]*entity.ClickLog, 0, len(msgs))
 	for _, msg := range msgs {
 		log, err := parseClickLog(msg)
 		if err != nil {
-			// Malformed message: ACK to avoid infinite retry, log for observability.
-			logger.Error(ctx, "click_consumer: parse message failed, ACKing malformed message",
+			// Malformed message: ACK immediately to avoid infinite retry.
+			logger.Error(ctx, "click_consumer: parse failed, ACKing malformed message",
 				"msg_id", msg.ID, "error", err)
-			_ = c.rdb.XAck(ctx, clickStream, c.groupName, msg.ID).Err()
+			_ = rdb.XAck(ctx, consumer.ClickStream, c.groupName, msg.ID).Err()
 			continue
 		}
 		logs = append(logs, log)
 	}
 
 	if len(logs) == 0 {
-		return
+		return nil
 	}
 
-	// Collect IDs for ACK after successful batch insert.
-	ids := make([]string, len(logs))
+	// Collect IDs only for successfully parsed messages.
+	ids := make([]string, 0, len(logs))
 	for i, msg := range msgs {
-		if i < len(ids) {
-			ids[i] = msg.ID
+		if i < len(logs) {
+			ids = append(ids, msg.ID)
 		}
 	}
 
@@ -158,21 +125,22 @@ func (c *ClickConsumer) processBatch(ctx context.Context, msgs []redis.XMessage)
 		// Do NOT ACK — messages stay in PEL and will be retried via XCLAIM.
 		logger.Error(ctx, "click_consumer: ProcessBatch failed, messages left in PEL",
 			"count", len(logs), "error", err)
-		return
+		return nil
 	}
 
 	// Success — ACK all messages in the batch.
-	if err := c.rdb.XAck(ctx, clickStream, c.groupName, ids...).Err(); err != nil {
+	if err := rdb.XAck(ctx, consumer.ClickStream, c.groupName, ids...).Err(); err != nil {
 		logger.Error(ctx, "click_consumer: XACK failed after successful batch",
 			"count", len(ids), "error", err)
-		return
+		return nil
 	}
 	logger.Info(ctx, "click_consumer: batch processed", "count", len(logs))
+	return nil
 }
 
 // reclaimLoop runs on a fixed interval to reclaim idle PEL messages and move
 // messages that exceeded maxDelivery to the dead letter queue.
-func (c *ClickConsumer) reclaimLoop(ctx context.Context) {
+func (c *Consumer) reclaimLoop(ctx context.Context) {
 	ticker := time.NewTicker(c.reclaimInterval)
 	defer ticker.Stop()
 
@@ -188,9 +156,9 @@ func (c *ClickConsumer) reclaimLoop(ctx context.Context) {
 
 // reclaim queries the PEL for idle messages and either re-claims them for
 // retry or moves them to the DLQ if delivery count exceeds maxDelivery.
-func (c *ClickConsumer) reclaim(ctx context.Context) {
+func (c *Consumer) reclaim(ctx context.Context) {
 	pending, err := c.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: clickStream,
+		Stream: consumer.ClickStream,
 		Group:  c.groupName,
 		Start:  "-",
 		End:    "+",
@@ -211,7 +179,7 @@ func (c *ClickConsumer) reclaim(ctx context.Context) {
 
 		// Reclaim the message so this consumer can retry it.
 		if err := c.rdb.XClaim(ctx, &redis.XClaimArgs{
-			Stream:   clickStream,
+			Stream:   consumer.ClickStream,
 			Group:    c.groupName,
 			Consumer: c.consumer,
 			MinIdle:  c.idleThreshold,
@@ -223,20 +191,20 @@ func (c *ClickConsumer) reclaim(ctx context.Context) {
 }
 
 // sendToDLQ moves a message to stream:click-dlq, then ACKs it from the main stream.
-func (c *ClickConsumer) sendToDLQ(ctx context.Context, msgID string) {
+func (c *Consumer) sendToDLQ(ctx context.Context, msgID string) {
 	// Read the original message to copy its payload to the DLQ.
-	msgs, err := c.rdb.XRange(ctx, clickStream, msgID, msgID).Result()
+	msgs, err := c.rdb.XRange(ctx, consumer.ClickStream, msgID, msgID).Result()
 	if err != nil || len(msgs) == 0 {
 		logger.Error(ctx, "click_consumer: cannot read message for DLQ transfer",
 			"msg_id", msgID, "error", err)
-		// ACK anyway to avoid infinite loop.
-		_ = c.rdb.XAck(ctx, clickStream, c.groupName, msgID).Err()
+		// ACK anyway to avoid an infinite loop.
+		_ = c.rdb.XAck(ctx, consumer.ClickStream, c.groupName, msgID).Err()
 		return
 	}
 
 	// Write to DLQ with original payload preserved.
 	if err := c.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: clickDLQ,
+		Stream: consumer.ClickDLQ,
 		ID:     "*",
 		Values: msgs[0].Values,
 	}).Err(); err != nil {
@@ -244,12 +212,12 @@ func (c *ClickConsumer) sendToDLQ(ctx context.Context, msgID string) {
 	}
 
 	// ACK the original to remove it from PEL.
-	if err := c.rdb.XAck(ctx, clickStream, c.groupName, msgID).Err(); err != nil {
+	if err := c.rdb.XAck(ctx, consumer.ClickStream, c.groupName, msgID).Err(); err != nil {
 		logger.Error(ctx, "click_consumer: XACK after DLQ failed", "msg_id", msgID, "error", err)
 	}
 
 	logger.Error(ctx, "click_consumer: message sent to DLQ (exceeded max delivery)",
-		"msg_id", msgID, "dlq", clickDLQ)
+		"msg_id", msgID, "dlq", consumer.ClickDLQ)
 }
 
 // parseClickLog converts a raw Redis stream message to an entity.ClickLog.

@@ -1,6 +1,6 @@
-package consumer_test
+package og_test
 
-// Integration tests for OGConsumer.
+// Integration tests for og.Consumer.
 //
 // Prerequisites: a running Redis instance.
 // Set REDIS_STREAM_URL environment variable (or use .env file) before running.
@@ -8,7 +8,7 @@ package consumer_test
 // Run with:
 //   make test-integration
 // or:
-//   REDIS_STREAM_URL=redis://... go test ./internal/consumer/...
+//   REDIS_STREAM_URL=redis://... go test ./internal/consumer/og/...
 
 import (
 	"context"
@@ -22,19 +22,19 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/rjchien728/short-url/internal/consumer"
+	ogconsumer "github.com/rjchien728/short-url/internal/consumer/og"
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/mock"
 )
 
-const ogTestStream = "stream:og-fetch"
-const ogTestConsumer = "test-og-consumer"
+const testConsumerName = "test-og-consumer"
 
-type OGConsumerSuite struct {
+type ConsumerSuite struct {
 	suite.Suite
 	rdb *redis.Client
 }
 
-func (s *OGConsumerSuite) SetupSuite() {
+func (s *ConsumerSuite) SetupSuite() {
 	streamURL := os.Getenv("REDIS_STREAM_URL")
 	if streamURL == "" {
 		s.T().Skip("REDIS_STREAM_URL not set — skipping consumer integration tests")
@@ -50,31 +50,30 @@ func (s *OGConsumerSuite) SetupSuite() {
 	}
 }
 
-func (s *OGConsumerSuite) TearDownSuite() {
+func (s *ConsumerSuite) TearDownSuite() {
 	if s.rdb != nil {
 		_ = s.rdb.Close()
 	}
 }
 
-func (s *OGConsumerSuite) SetupTest() {
-	// Clean up stream and consumer group before each test.
+func (s *ConsumerSuite) SetupTest() {
 	ctx := context.Background()
-	s.rdb.Del(ctx, ogTestStream)
+	s.rdb.Del(ctx, consumer.OGStream)
 }
 
-// newOGConsumer creates a fresh consumer with a unique group name per test to avoid PEL collisions.
-// Uses a short block timeout so consumer.Run exits quickly after ctx is cancelled.
-func (s *OGConsumerSuite) newOGConsumer(svc interface {
+// newConsumer creates a fresh Consumer with a unique group name per test to avoid PEL collisions.
+// Uses a short block timeout so Run exits quickly after ctx is cancelled.
+func (s *ConsumerSuite) newConsumer(svc interface {
 	ProcessTask(context.Context, *entity.OGFetchTask) error
-}, groupName string) *consumer.OGConsumer {
-	return consumer.NewOGConsumer(s.rdb, svc, groupName, ogTestConsumer).
+}, groupName string) *ogconsumer.Consumer {
+	return ogconsumer.New(s.rdb, svc, groupName, testConsumerName).
 		WithBlockTimeout(200 * time.Millisecond)
 }
 
-// publishOGTask writes a raw og-fetch message to the stream (bypassing eventpub to keep test self-contained).
-func (s *OGConsumerSuite) publishOGTask(ctx context.Context, shortURLID int64, longURL string, retryCount int) string {
+// publishOGTask writes a raw og-fetch message to the stream.
+func (s *ConsumerSuite) publishOGTask(ctx context.Context, shortURLID int64, longURL string, retryCount int) string {
 	res, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: ogTestStream,
+		Stream: consumer.OGStream,
 		ID:     "*",
 		Values: map[string]any{
 			"short_url_id": "1001",
@@ -91,7 +90,7 @@ func (s *OGConsumerSuite) publishOGTask(ctx context.Context, shortURLID int64, l
 // --- Test cases ---
 
 // TestProcessTask_Success verifies that a message is ACKed after successful ProcessTask.
-func (s *OGConsumerSuite) TestProcessTask_Success() {
+func (s *ConsumerSuite) TestProcessTask_Success() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -99,33 +98,29 @@ func (s *OGConsumerSuite) TestProcessTask_Success() {
 	defer ctrl.Finish()
 
 	svc := mock.NewMockOGWorkerService(ctrl)
-
-	// Expect exactly one ProcessTask call, returning nil (success).
 	svc.EXPECT().
 		ProcessTask(gomock.Any(), gomock.Any()).
 		Return(nil).
 		Times(1)
 
 	groupName := "test-og-success-group"
-	c := s.newOGConsumer(svc, groupName)
+	c := s.newConsumer(svc, groupName)
 
 	msgID := s.publishOGTask(ctx, 1001, "https://example.com", 0)
 
-	// Run the consumer in background; cancel after it processes the message.
-	doneCh := make(chan error, 1)
 	consumerCtx, consumerCancel := context.WithCancel(ctx)
+	doneCh := make(chan error, 1)
 	go func() {
 		doneCh <- c.Run(consumerCtx)
 	}()
 
-	// Wait briefly for the consumer to pick up the message, then stop it.
 	time.Sleep(200 * time.Millisecond)
 	consumerCancel()
 	<-doneCh
 
 	// Verify the message is no longer in PEL (was ACKed).
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: ogTestStream,
+		Stream: consumer.OGStream,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -137,7 +132,7 @@ func (s *OGConsumerSuite) TestProcessTask_Success() {
 
 // TestProcessTask_ServiceError verifies that even when ProcessTask returns an error,
 // the message is still ACKed (OG fetch failures are non-fatal).
-func (s *OGConsumerSuite) TestProcessTask_ServiceError() {
+func (s *ConsumerSuite) TestProcessTask_ServiceError() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -145,15 +140,13 @@ func (s *OGConsumerSuite) TestProcessTask_ServiceError() {
 	defer ctrl.Finish()
 
 	svc := mock.NewMockOGWorkerService(ctrl)
-
-	// ProcessTask returns an error — consumer should still ACK.
 	svc.EXPECT().
 		ProcessTask(gomock.Any(), gomock.Any()).
 		Return(errors.New("fetch failed")).
 		Times(1)
 
 	groupName := "test-og-error-group"
-	c := s.newOGConsumer(svc, groupName)
+	c := s.newConsumer(svc, groupName)
 
 	msgID := s.publishOGTask(ctx, 1002, "https://bad-url.example.com", 0)
 
@@ -169,7 +162,7 @@ func (s *OGConsumerSuite) TestProcessTask_ServiceError() {
 
 	// Verify message was ACKed despite the service error.
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: ogTestStream,
+		Stream: consumer.OGStream,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -180,7 +173,7 @@ func (s *OGConsumerSuite) TestProcessTask_ServiceError() {
 }
 
 // TestProcessTask_ParsedCorrectly verifies that stream fields are correctly parsed into OGFetchTask.
-func (s *OGConsumerSuite) TestProcessTask_ParsedCorrectly() {
+func (s *ConsumerSuite) TestProcessTask_ParsedCorrectly() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -199,11 +192,10 @@ func (s *OGConsumerSuite) TestProcessTask_ParsedCorrectly() {
 		Times(1)
 
 	groupName := "test-og-parse-group"
-	c := s.newOGConsumer(svc, groupName)
+	c := s.newConsumer(svc, groupName)
 
-	// Publish with explicit field values.
 	_, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: ogTestStream,
+		Stream: consumer.OGStream,
 		ID:     "*",
 		Values: map[string]any{
 			"short_url_id": "9999",
@@ -230,5 +222,5 @@ func (s *OGConsumerSuite) TestProcessTask_ParsedCorrectly() {
 }
 
 func TestOGConsumer(t *testing.T) {
-	suite.Run(t, new(OGConsumerSuite))
+	suite.Run(t, new(ConsumerSuite))
 }

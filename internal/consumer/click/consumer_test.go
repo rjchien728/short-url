@@ -1,6 +1,6 @@
-package consumer_test
+package click_test
 
-// Integration tests for ClickConsumer.
+// Integration tests for click.Consumer.
 //
 // Prerequisites: a running Redis instance.
 // Set REDIS_STREAM_URL environment variable (or use .env file) before running.
@@ -8,7 +8,7 @@ package consumer_test
 // Run with:
 //   make test-integration
 // or:
-//   REDIS_STREAM_URL=redis://... go test ./internal/consumer/...
+//   REDIS_STREAM_URL=redis://... go test ./internal/consumer/click/...
 
 import (
 	"context"
@@ -23,20 +23,19 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/rjchien728/short-url/internal/consumer"
+	clickconsumer "github.com/rjchien728/short-url/internal/consumer/click"
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/mock"
 )
 
-const clickTestStream = "stream:click-log"
-const clickTestDLQ = "stream:click-dlq"
-const clickTestConsumer = "test-click-consumer"
+const testConsumerName = "test-click-consumer"
 
-type ClickConsumerSuite struct {
+type ConsumerSuite struct {
 	suite.Suite
 	rdb *redis.Client
 }
 
-func (s *ClickConsumerSuite) SetupSuite() {
+func (s *ConsumerSuite) SetupSuite() {
 	streamURL := os.Getenv("REDIS_STREAM_URL")
 	if streamURL == "" {
 		s.T().Skip("REDIS_STREAM_URL not set — skipping consumer integration tests")
@@ -52,30 +51,30 @@ func (s *ClickConsumerSuite) SetupSuite() {
 	}
 }
 
-func (s *ClickConsumerSuite) TearDownSuite() {
+func (s *ConsumerSuite) TearDownSuite() {
 	if s.rdb != nil {
 		_ = s.rdb.Close()
 	}
 }
 
-func (s *ClickConsumerSuite) SetupTest() {
+func (s *ConsumerSuite) SetupTest() {
 	ctx := context.Background()
-	s.rdb.Del(ctx, clickTestStream, clickTestDLQ)
+	s.rdb.Del(ctx, consumer.ClickStream, consumer.ClickDLQ)
 }
 
-// newClickConsumer creates a ClickConsumer with a unique group name per test.
-// Uses a short block timeout so consumer.Run exits quickly after ctx is cancelled.
-func (s *ClickConsumerSuite) newClickConsumer(svc interface {
+// newConsumer creates a Consumer with a unique group name per test.
+// Uses a short block timeout so Run exits quickly after ctx is cancelled.
+func (s *ConsumerSuite) newConsumer(svc interface {
 	ProcessBatch(context.Context, []*entity.ClickLog) error
-}, groupName string) *consumer.ClickConsumer {
-	return consumer.NewClickConsumer(s.rdb, svc, groupName, clickTestConsumer, 10, 3).
+}, groupName string) *clickconsumer.Consumer {
+	return clickconsumer.New(s.rdb, svc, groupName, testConsumerName, 10, 3).
 		WithBlockTimeout(200 * time.Millisecond)
 }
 
 // publishClickEvent writes a well-formed click event to the stream.
-func (s *ClickConsumerSuite) publishClickEvent(ctx context.Context, id string) string {
+func (s *ConsumerSuite) publishClickEvent(ctx context.Context, id string) string {
 	msgID, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: clickTestStream,
+		Stream: consumer.ClickStream,
 		ID:     "*",
 		Values: map[string]any{
 			"id":           id,
@@ -97,7 +96,7 @@ func (s *ClickConsumerSuite) publishClickEvent(ctx context.Context, id string) s
 // --- Test cases ---
 
 // TestProcessBatch_Success verifies that messages are ACKed after a successful ProcessBatch.
-func (s *ClickConsumerSuite) TestProcessBatch_Success() {
+func (s *ConsumerSuite) TestProcessBatch_Success() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -111,7 +110,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_Success() {
 		Times(1)
 
 	groupName := "test-click-success-group"
-	c := s.newClickConsumer(svc, groupName)
+	c := s.newConsumer(svc, groupName)
 
 	msgID := s.publishClickEvent(ctx, "click-id-001")
 
@@ -127,7 +126,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_Success() {
 
 	// Verify message was ACKed (PEL should be empty).
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: clickTestStream,
+		Stream: consumer.ClickStream,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -139,7 +138,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_Success() {
 
 // TestProcessBatch_Failure verifies that messages are NOT ACKed when ProcessBatch fails,
 // leaving them in the PEL for retry.
-func (s *ClickConsumerSuite) TestProcessBatch_Failure() {
+func (s *ConsumerSuite) TestProcessBatch_Failure() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -153,7 +152,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_Failure() {
 		Times(1)
 
 	groupName := "test-click-failure-group"
-	c := s.newClickConsumer(svc, groupName)
+	c := s.newConsumer(svc, groupName)
 
 	msgID := s.publishClickEvent(ctx, "click-id-002")
 
@@ -169,7 +168,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_Failure() {
 
 	// Message should still be in PEL (not ACKed).
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: clickTestStream,
+		Stream: consumer.ClickStream,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -181,7 +180,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_Failure() {
 }
 
 // TestProcessBatch_ParsedCorrectly verifies that stream fields are correctly parsed into ClickLog.
-func (s *ClickConsumerSuite) TestProcessBatch_ParsedCorrectly() {
+func (s *ConsumerSuite) TestProcessBatch_ParsedCorrectly() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -200,11 +199,11 @@ func (s *ClickConsumerSuite) TestProcessBatch_ParsedCorrectly() {
 		Times(1)
 
 	groupName := "test-click-parse-group"
-	c := s.newClickConsumer(svc, groupName)
+	c := s.newConsumer(svc, groupName)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err := s.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: clickTestStream,
+		Stream: consumer.ClickStream,
 		ID:     "*",
 		Values: map[string]any{
 			"id":           "test-uuid-parse",
@@ -250,7 +249,7 @@ func (s *ClickConsumerSuite) TestProcessBatch_ParsedCorrectly() {
 // Setup: manually bump the delivery count to 4 (> maxDelivery=3) via XClaim with MinIdle=0,
 // then start the consumer with short reclaimInterval/idleThreshold so the reclaim loop fires
 // quickly without waiting real-world 10s/30s.
-func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
+func (s *ConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -267,7 +266,7 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	groupName := "test-click-dlq-group"
 
 	// Ensure group exists before publishing.
-	_ = s.rdb.XGroupCreateMkStream(ctx, clickTestStream, groupName, "0").Err()
+	_ = s.rdb.XGroupCreateMkStream(ctx, consumer.ClickStream, groupName, "0").Err()
 
 	// Publish a message.
 	msgID := s.publishClickEvent(ctx, "click-dlq-test")
@@ -277,14 +276,14 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	_, _ = s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    groupName,
 		Consumer: "dummy-consumer-0",
-		Streams:  []string{clickTestStream, ">"},
+		Streams:  []string{consumer.ClickStream, ">"},
 		Count:    1,
 		Block:    0,
 	}).Result()
 
 	for i := 0; i < 3; i++ {
 		_, _ = s.rdb.XClaim(ctx, &redis.XClaimArgs{
-			Stream:   clickTestStream,
+			Stream:   consumer.ClickStream,
 			Group:    groupName,
 			Consumer: fmt.Sprintf("dummy-consumer-%d", i+1),
 			MinIdle:  0,
@@ -294,7 +293,7 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 
 	// Confirm delivery count is now > maxDelivery before starting consumer.
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: clickTestStream,
+		Stream: consumer.ClickStream,
 		Group:  groupName,
 		Start:  "-",
 		End:    "+",
@@ -305,7 +304,7 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	s.Greater(pending[0].RetryCount, int64(3), "delivery count should exceed maxDelivery=3")
 
 	// Use short intervals so the reclaim loop fires quickly in the test environment.
-	c := consumer.NewClickConsumer(s.rdb, svc, groupName, clickTestConsumer, 10, 3).
+	c := clickconsumer.New(s.rdb, svc, groupName, testConsumerName, 10, 3).
 		WithReclaimInterval(200 * time.Millisecond).
 		WithIdleThreshold(100 * time.Millisecond).
 		WithBlockTimeout(200 * time.Millisecond)
@@ -318,7 +317,7 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 	var dlqMsgs []redis.XMessage
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		dlqMsgs, _ = s.rdb.XRange(ctx, clickTestDLQ, "-", "+").Result()
+		dlqMsgs, _ = s.rdb.XRange(ctx, consumer.ClickDLQ, "-", "+").Result()
 		if len(dlqMsgs) > 0 {
 			break
 		}
@@ -333,7 +332,7 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 
 	// Verify original is ACKed (no longer in PEL).
 	pendingAfter, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: clickTestStream,
+		Stream: consumer.ClickStream,
 		Group:  groupName,
 		Start:  msgID,
 		End:    msgID,
@@ -344,5 +343,5 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 }
 
 func TestClickConsumer(t *testing.T) {
-	suite.Run(t, new(ClickConsumerSuite))
+	suite.Run(t, new(ConsumerSuite))
 }

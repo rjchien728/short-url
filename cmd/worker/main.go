@@ -10,7 +10,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/rjchien728/short-url/internal/consumer"
+	clickconsumer "github.com/rjchien728/short-url/internal/consumer/click"
+	ogconsumer "github.com/rjchien728/short-url/internal/consumer/og"
 	"github.com/rjchien728/short-url/internal/gateway/ogfetch"
 	"github.com/rjchien728/short-url/internal/infra"
 	"github.com/rjchien728/short-url/internal/pkg/logger"
@@ -64,12 +65,12 @@ func main() {
 
 	// --- Consumer ---
 	consumerCfg := cfg.Consumer
-	ogC := consumer.NewOGConsumer(
+	ogC := ogconsumer.New(
 		streamRdb, ogSvc,
 		consumerCfg.OGGroupName,
 		consumerCfg.ConsumerName,
 	)
-	clickC := consumer.NewClickConsumer(
+	clickC := clickconsumer.New(
 		streamRdb, clickSvc,
 		consumerCfg.ClickGroupName,
 		consumerCfg.ConsumerName,
