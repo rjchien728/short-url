@@ -9,6 +9,7 @@ require (
 	github.com/jackc/pgx/v5 v5.5.4
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.1
+	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/redis/go-redis/v9 v9.10.0
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
@@ -33,6 +34,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect

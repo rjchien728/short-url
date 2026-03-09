@@ -15,5 +15,8 @@
 .DS_Store
 Thumbs.db
 
+# GeoIP database (large binary, do not commit)
+data/*.mmdb
+
 # AI tools
 AGENTS.md

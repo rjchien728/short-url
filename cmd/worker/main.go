@@ -14,6 +14,7 @@ import (
 	ogconsumer "github.com/rjchien728/short-url/internal/consumer/og"
 	"github.com/rjchien728/short-url/internal/gateway/ogfetch"
 	"github.com/rjchien728/short-url/internal/infra"
+	"github.com/rjchien728/short-url/internal/pkg/geoip"
 	"github.com/rjchien728/short-url/internal/pkg/logger"
 	"github.com/rjchien728/short-url/internal/repository/clicklog"
 	"github.com/rjchien728/short-url/internal/repository/eventpub"
@@ -61,6 +62,14 @@ func main() {
 	}
 	defer func() { _ = cacheRdb.Close() }()
 
+	// --- GeoIP ---
+	geoipReader, err := geoip.NewReader(cfg.GeoIP.DBPath)
+	if err != nil {
+		logger.Error(ctx, "failed to open geoip database", "path", cfg.GeoIP.DBPath, "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = geoipReader.Close() }()
+
 	// --- Repository & Gateway ---
 	urlRepo := shorturl.NewRepository(dbPool)
 	clickRepo := clicklog.NewRepository(dbPool)
@@ -70,7 +79,7 @@ func main() {
 
 	// --- Service ---
 	ogSvc := ogworkersvc.New(urlRepo, cache, fetcher, publisher)
-	clickSvc := clickworkersvc.New(clickRepo)
+	clickSvc := clickworkersvc.New(clickRepo, geoipReader)
 
 	// --- Consumer ---
 	consumerCfg := cfg.Consumer

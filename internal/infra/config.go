@@ -14,13 +14,14 @@ type Config struct {
 	Cache    RedisConfig    // Redis DB 0
 	Stream   RedisConfig    // Redis DB 1
 	Consumer ConsumerConfig // Redis Stream consumer settings
+	GeoIP    GeoIPConfig
 }
 
 // AppConfig holds basic application settings.
 type AppConfig struct {
 	Env               string `mapstructure:"APP_ENV"`
 	LogLevel          string `mapstructure:"APP_LOG_LEVEL"`
-	LogFormat         string `mapstructure:"APP_LOG_FORMAT"`         // "json" or "text"
+	LogFormat         string `mapstructure:"APP_LOG_FORMAT"`          // "json" or "text"
 	OGDefaultImage    string `mapstructure:"OG_DEFAULT_IMAGE"`        // fallback image URL when no image is found during OG fetch
 	IDObfuscationSalt int64  `mapstructure:"APP_ID_OBFUSCATION_SALT"` // salt for ID obfuscation before base58 encoding; MUST be changed in production
 }
@@ -54,6 +55,11 @@ type ConsumerConfig struct {
 	MaxDelivery    int    // CONSUMER_MAX_DELIVERY, default 3
 }
 
+// GeoIPConfig holds GeoIP database settings.
+type GeoIPConfig struct {
+	DBPath string // GEOIP_DB_PATH, path to the GeoLite2-Country.mmdb file
+}
+
 // Load configuration following this priority:
 // Default values -> .env file -> Environment variables.
 func Load() (*Config, error) {
@@ -76,6 +82,7 @@ func Load() (*Config, error) {
 	v.SetDefault("CONSUMER_NAME", "worker-1")
 	v.SetDefault("CONSUMER_CLICK_BATCH_SIZE", 100)
 	v.SetDefault("CONSUMER_MAX_DELIVERY", 3)
+	v.SetDefault("GEOIP_DB_PATH", "data/GeoLite2-Country.mmdb")
 
 	// 2. Read .env file (optional, for local development)
 	v.SetConfigFile(".env")
@@ -115,6 +122,9 @@ func Load() (*Config, error) {
 		ConsumerName:   v.GetString("CONSUMER_NAME"),
 		ClickBatchSize: v.GetInt("CONSUMER_CLICK_BATCH_SIZE"),
 		MaxDelivery:    v.GetInt("CONSUMER_MAX_DELIVERY"),
+	}
+	cfg.GeoIP = GeoIPConfig{
+		DBPath: v.GetString("GEOIP_DB_PATH"),
 	}
 
 	// 5. Validate required fields
