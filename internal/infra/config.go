@@ -20,6 +20,7 @@ type Config struct {
 type AppConfig struct {
 	Env               string `mapstructure:"APP_ENV"`
 	LogLevel          string `mapstructure:"APP_LOG_LEVEL"`
+	LogFormat         string `mapstructure:"APP_LOG_FORMAT"`         // "json" or "text"
 	OGDefaultImage    string `mapstructure:"OG_DEFAULT_IMAGE"`        // fallback image URL when no image is found during OG fetch
 	IDObfuscationSalt int64  `mapstructure:"APP_ID_OBFUSCATION_SALT"` // salt for ID obfuscation before base58 encoding; MUST be changed in production
 }
@@ -61,6 +62,7 @@ func Load() (*Config, error) {
 	// 1. Set default values
 	v.SetDefault("APP_ENV", "development")
 	v.SetDefault("APP_LOG_LEVEL", "info")
+	v.SetDefault("APP_LOG_FORMAT", "text")
 	v.SetDefault("OG_DEFAULT_IMAGE", "")
 	v.SetDefault("APP_ID_OBFUSCATION_SALT", 123) // dev default; MUST be replaced with a secret value in production
 	v.SetDefault("PORT", "8080")
@@ -88,6 +90,7 @@ func Load() (*Config, error) {
 	cfg.App = AppConfig{
 		Env:               v.GetString("APP_ENV"),
 		LogLevel:          v.GetString("APP_LOG_LEVEL"),
+		LogFormat:         v.GetString("APP_LOG_FORMAT"),
 		OGDefaultImage:    v.GetString("OG_DEFAULT_IMAGE"),
 		IDObfuscationSalt: v.GetInt64("APP_ID_OBFUSCATION_SALT"),
 	}

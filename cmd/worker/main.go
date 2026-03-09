@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// --- Logger ---
-	if err := logger.Setup(cfg.App.LogLevel, "text"); err != nil {
+	if err := logger.Setup(cfg.App.LogLevel, cfg.App.LogFormat, "worker"); err != nil {
 		logger.Warn(ctx, "logger setup failed, using defaults", "error", err)
 	}
 

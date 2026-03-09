@@ -16,10 +16,10 @@ type ctxKey string
 // loggerKey is the context key used to store logger instances.
 const loggerKey ctxKey = "logger"
 
-// Setup configures the global slog.Default() logger with the specified level and format.
+// Setup configures the global slog.Default() logger with the specified level, format, and name.
 // Supported levels: "debug", "info", "warn", "error" (case-insensitive).
 // Format: "json" for JSON output, anything else for text output.
-func Setup(level, format string) error {
+func Setup(level, format, name string) error {
 	logLevel, err := parseLevel(level)
 	if err != nil {
 		return err
@@ -38,6 +38,9 @@ func Setup(level, format string) error {
 	}
 
 	logger := slog.New(handler)
+	if name != "" {
+		logger = logger.With("name", name)
+	}
 	slog.SetDefault(logger)
 	return nil
 }

@@ -1,32 +1,20 @@
-services:
-  migrate:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.migrate
-    env_file: ../.env
-    restart: "no"
-    depends_on:
-      db:
-        condition: service_healthy
+name: short-url
 
+services:
   api:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
+    image: short-url-api:latest
     env_file: ../.env
     ports:
       - "${PORT:-8080}:8080"
     restart: unless-stopped
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
 
   worker:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.worker
+    image: short-url-worker:latest
     env_file: ../.env
     restart: unless-stopped
-    depends_on:
-      migrate:
-        condition: service_completed_successfully

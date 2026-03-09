@@ -1,90 +1,112 @@
+# ==============================================================================
+# Main Variables
+# ==============================================================================
+
+MIGRATE_CMD  = go run cmd/migrate/main.go
+COMPOSE_INFRA = docker compose -f deploy/docker-compose.infra.yml
+COMPOSE_APP   = docker compose -f deploy/docker-compose.app.yml
+
 # Load .env variables if present
 ifneq (,$(wildcard ./.env))
     include .env
     export
 endif
 
-# --- Base Variables ---
-BINARY_NAME=short-url-api
-MIGRATE_CMD=go run cmd/migrate/main.go
+# ==============================================================================
+# 1. Environment Initialization
+# ==============================================================================
 
-# --- Compose file shortcuts ---
-COMPOSE_INFRA=docker compose -f deploy/docker-compose.infra.yml
-COMPOSE_ALL=docker compose -f deploy/docker-compose.infra.yml -f deploy/docker-compose.app.yml
-
-# --- Initialization ---
-.PHONY: init
-init: ## Initialize environment: create .env and start infra
+.PHONY: local-init
+local-init: ## Initialize development environment: .env -> infra-up -> migrate-up
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
 		echo "Created .env from .env.example"; \
 	fi
-	$(COMPOSE_INFRA) up -d
-	@echo "Infrastructure is up and running."
+	@$(MAKE) infra-up
+	@$(MAKE) migrate-up
+	@echo "Local environment initialized. You can now run 'make dev'."
 
-# --- Docker Management (infra only) ---
-.PHONY: docker-up docker-down docker-logs
-docker-up: ## Start infra (db + redis)
-	$(COMPOSE_INFRA) up -d
+# ==============================================================================
+# 2. Infrastructure Management (DB, Redis)
+# ==============================================================================
 
-docker-down: ## Stop infra (db + redis)
+.PHONY: infra-up infra-down infra-logs
+infra-up: ## Start infrastructure containers (db + redis) and wait for health
+	$(COMPOSE_INFRA) up -d --wait
+
+infra-down: ## Stop and remove infrastructure containers
 	$(COMPOSE_INFRA) down
 
-docker-logs: ## View infra container logs
+infra-logs: ## View infrastructure logs
 	$(COMPOSE_INFRA) logs -f
 
-# --- Database Migration ---
-.PHONY: migrate-up migrate-down
-migrate-up: ## Run all pending migrations
-	$(MIGRATE_CMD) up
+# ==============================================================================
+# 3. Local Development (Go Environment)
+# ==============================================================================
 
-migrate-down: ## Rollback all migrations
-	$(MIGRATE_CMD) down
-
-# --- Mock Generation ---
-.PHONY: mock
-mock: ## Generate all mocks via go:generate (requires mockgen in PATH)
-	go generate ./internal/domain/... ./internal/pkg/snowflake/...
-	@echo "Mocks generated successfully."
-
-# --- Development Commands ---
-.PHONY: run-api run-worker dev build test lint
-run-api: ## Start API server
-	go run cmd/api/main.go
-
-run-worker: ## Start worker
-	go run cmd/worker/main.go
-
-dev: ## Start API and worker together (Ctrl+C stops both)
+.PHONY: dev run-api run-worker mock
+dev: ## Start API and worker locally (Ctrl+C stops both)
 	@go run cmd/api/main.go & API_PID=$$!; \
 	go run cmd/worker/main.go & WORKER_PID=$$!; \
 	trap "kill $$API_PID $$WORKER_PID 2>/dev/null" INT TERM; \
 	wait $$API_PID $$WORKER_PID
 
-build: ## Build the API binary
-	go build -o bin/$(BINARY_NAME) cmd/api/main.go
+run-api: ## Run API server locally
+	go run cmd/api/main.go
 
-test: ## Run unit tests only (no DB/Redis required)
+run-worker: ## Run worker locally
+	go run cmd/worker/main.go
+
+mock: ## Generate mocks for development
+	go generate ./internal/domain/... ./internal/pkg/snowflake/...
+	@echo "Mocks generated."
+
+# ==============================================================================
+# 4. Database Migrations (Local)
+# ==============================================================================
+
+.PHONY: migrate-up migrate-down
+migrate-up: ## Run database migrations locally
+	$(MIGRATE_CMD) up
+
+migrate-down: ## Rollback database migrations locally
+	$(MIGRATE_CMD) down
+
+# ==============================================================================
+# 5. Testing & Quality
+# ==============================================================================
+
+.PHONY: test test-integration lint
+test: ## Run unit tests (logic only, no external deps)
 	go test -v -count=1 -timeout=30s $(shell go list ./... | grep -v 'repository/shorturl\|repository/clicklog\|internal/consumer')
 
-test-integration: ## Run integration tests against local DB and Redis (requires migrate-up first)
+test-integration: ## Run integration tests (against local DB/Redis)
 	go test -v -count=1 -timeout=30s ./internal/repository/... ./internal/gateway/... ./internal/consumer/...
 
-lint: ## Run linter (requires golangci-lint)
+lint: ## Run golangci-lint
 	golangci-lint run
 
-# --- Deployment (VM) ---
-.PHONY: deploy deploy-down deploy-logs
-deploy: ## Build images and start all services: infra + migrate + api + worker
-	$(COMPOSE_ALL) up -d --build
+# ==============================================================================
+# 6. Containerized Application (Deployment)
+# ==============================================================================
 
-deploy-down: ## Stop app services only (api, worker, migrate); keeps infra running
-	docker compose -f deploy/docker-compose.app.yml down
+.PHONY: build-images app-up app-down app-logs
+build-images: ## Build Docker images for API and Worker
+	$(COMPOSE_APP) build
 
-deploy-logs: ## View logs for all services
-	$(COMPOSE_ALL) logs -f
+app-up: ## Start API and Worker containers (requires infra-up)
+	$(COMPOSE_APP) up -d
 
-# --- Miscellaneous ---
+app-down: ## Stop API and Worker containers
+	$(COMPOSE_APP) down
+
+app-logs: ## View application logs
+	$(COMPOSE_APP) logs -f
+
+# ==============================================================================
+# 7. Utilities
+# ==============================================================================
+
 .PHONY: help
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'

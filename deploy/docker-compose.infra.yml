@@ -1,3 +1,5 @@
+name: short-url-infra
+
 services:
   db:
     image: postgres:17-alpine
