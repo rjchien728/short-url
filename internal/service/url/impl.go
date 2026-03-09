@@ -86,6 +86,7 @@ func (s *Service) Create(ctx context.Context, req domainservice.CreateURLRequest
 	// publish OG fetch task — failure is non-fatal; OG metadata is best-effort
 	if pubErr := s.publisher.PublishOGFetchTask(ctx, &entity.OGFetchTask{
 		ShortURLID: url.ID,
+		ShortCode:  url.ShortCode,
 		LongURL:    url.LongURL,
 	}); pubErr != nil {
 		logger.Warn(ctx, "failed to publish OG fetch task", "short_code", url.ShortCode, "error", pubErr)

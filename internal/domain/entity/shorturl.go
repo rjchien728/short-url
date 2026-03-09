@@ -35,6 +35,7 @@ type OGMetadata struct {
 // RetryCount tracks how many times the fetch has been attempted (0 = first attempt).
 type OGFetchTask struct {
 	ShortURLID int64
+	ShortCode  string
 	LongURL    string
 	RetryCount int
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/rjchien728/short-url/internal/repository/clicklog"
 	"github.com/rjchien728/short-url/internal/repository/eventpub"
 	"github.com/rjchien728/short-url/internal/repository/shorturl"
+	"github.com/rjchien728/short-url/internal/repository/urlcache"
 	clickworkersvc "github.com/rjchien728/short-url/internal/service/clickworker"
 	ogworkersvc "github.com/rjchien728/short-url/internal/service/ogworker"
 )
@@ -38,7 +39,6 @@ func main() {
 	}
 
 	// --- Infrastructure ---
-	// Worker only needs the stream Redis client (no cache Redis needed).
 	dbPool, err := infra.NewPool(ctx, cfg.Database)
 	if err != nil {
 		logger.Error(ctx, "failed to connect to postgres", "error", err)
@@ -53,14 +53,23 @@ func main() {
 	}
 	defer func() { _ = streamRdb.Close() }()
 
+	// Cache Redis is needed by ogworker to invalidate stale OG metadata after a write.
+	cacheRdb, err := infra.NewRedisClient(ctx, cfg.Cache)
+	if err != nil {
+		logger.Error(ctx, "failed to connect to redis cache", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = cacheRdb.Close() }()
+
 	// --- Repository & Gateway ---
 	urlRepo := shorturl.NewRepository(dbPool)
 	clickRepo := clicklog.NewRepository(dbPool)
 	publisher := eventpub.NewPublisher(streamRdb)
+	cache := urlcache.NewCache(cacheRdb)
 	fetcher := ogfetch.NewFetcher(&http.Client{Timeout: 10 * time.Second}, cfg.App.OGDefaultImage)
 
 	// --- Service ---
-	ogSvc := ogworkersvc.New(urlRepo, fetcher, publisher)
+	ogSvc := ogworkersvc.New(urlRepo, cache, fetcher, publisher)
 	clickSvc := clickworkersvc.New(clickRepo)
 
 	// --- Consumer ---
