@@ -63,10 +63,12 @@ func (s *OGConsumerSuite) SetupTest() {
 }
 
 // newOGConsumer creates a fresh consumer with a unique group name per test to avoid PEL collisions.
+// Uses a short block timeout so consumer.Run exits quickly after ctx is cancelled.
 func (s *OGConsumerSuite) newOGConsumer(svc interface {
 	ProcessTask(context.Context, *entity.OGFetchTask) error
 }, groupName string) *consumer.OGConsumer {
-	return consumer.NewOGConsumer(s.rdb, svc, groupName, ogTestConsumer)
+	return consumer.NewOGConsumer(s.rdb, svc, groupName, ogTestConsumer).
+		WithBlockTimeout(200 * time.Millisecond)
 }
 
 // publishOGTask writes a raw og-fetch message to the stream (bypassing eventpub to keep test self-contained).

@@ -64,10 +64,12 @@ func (s *ClickConsumerSuite) SetupTest() {
 }
 
 // newClickConsumer creates a ClickConsumer with a unique group name per test.
+// Uses a short block timeout so consumer.Run exits quickly after ctx is cancelled.
 func (s *ClickConsumerSuite) newClickConsumer(svc interface {
 	ProcessBatch(context.Context, []*entity.ClickLog) error
 }, groupName string) *consumer.ClickConsumer {
-	return consumer.NewClickConsumer(s.rdb, svc, groupName, clickTestConsumer, 10, 5)
+	return consumer.NewClickConsumer(s.rdb, svc, groupName, clickTestConsumer, 10, 3).
+		WithBlockTimeout(200 * time.Millisecond)
 }
 
 // publishClickEvent writes a well-formed click event to the stream.
@@ -244,18 +246,18 @@ func (s *ClickConsumerSuite) TestProcessBatch_ParsedCorrectly() {
 }
 
 // TestDLQ_ExceedMaxDelivery verifies that a message exceeding maxDelivery is moved to the DLQ.
-// This test manually inserts the message into the PEL with a high delivery count by using
-// XCLAIM with a fake consumer, then triggering the reclaim logic via the consumer's internal
-// mechanism. We simulate this by publishing then letting reclaim run against a message that
-// has already been delivered many times.
+//
+// Setup: manually bump the delivery count to 4 (> maxDelivery=3) via XClaim with MinIdle=0,
+// then start the consumer with short reclaimInterval/idleThreshold so the reclaim loop fires
+// quickly without waiting real-world 10s/30s.
 func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	ctrl := gomock.NewController(s.T())
 	defer ctrl.Finish()
 
-	// Service always fails so the message accumulates delivery count in PEL.
+	// Service always fails so the message is never ACKed and stays in PEL.
 	svc := mock.NewMockClickWorkerService(ctrl)
 	svc.EXPECT().
 		ProcessBatch(gomock.Any(), gomock.Any()).
@@ -264,37 +266,33 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 
 	groupName := "test-click-dlq-group"
 
-	// Ensure group exists.
+	// Ensure group exists before publishing.
 	_ = s.rdb.XGroupCreateMkStream(ctx, clickTestStream, groupName, "0").Err()
 
 	// Publish a message.
 	msgID := s.publishClickEvent(ctx, "click-dlq-test")
 
-	// Read the message 6 times (> maxDelivery=5) by using XClaim to bump delivery count.
-	// We deliver to a "dummy" consumer, which won't ACK it, then reclaim 6+ times to exceed limit.
-	// Simplified approach: read with XREADGROUP 6 times to accumulate delivery count in PEL.
-	for i := 0; i < 6; i++ {
-		_, _ = s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    groupName,
-			Consumer: fmt.Sprintf("dummy-consumer-%d", i),
-			Streams:  []string{clickTestStream, ">"},
-			Count:    1,
-			Block:    0,
-		}).Result()
+	// Bump delivery count to 4 (> maxDelivery=3) using XClaim with MinIdle=0.
+	// First read puts it in PEL with delivery_count=1, each XClaim increments by 1.
+	_, _ = s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    groupName,
+		Consumer: "dummy-consumer-0",
+		Streams:  []string{clickTestStream, ">"},
+		Count:    1,
+		Block:    0,
+	}).Result()
 
-		// Claim it back to another consumer to increment delivery count.
-		if i < 5 {
-			_, _ = s.rdb.XClaim(ctx, &redis.XClaimArgs{
-				Stream:   clickTestStream,
-				Group:    groupName,
-				Consumer: fmt.Sprintf("dummy-consumer-%d", i+1),
-				MinIdle:  0,
-				Messages: []string{msgID},
-			}).Result()
-		}
+	for i := 0; i < 3; i++ {
+		_, _ = s.rdb.XClaim(ctx, &redis.XClaimArgs{
+			Stream:   clickTestStream,
+			Group:    groupName,
+			Consumer: fmt.Sprintf("dummy-consumer-%d", i+1),
+			MinIdle:  0,
+			Messages: []string{msgID},
+		}).Result()
 	}
 
-	// Verify the message is in PEL with delivery count > 5.
+	// Confirm delivery count is now > maxDelivery before starting consumer.
 	pending, err := s.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: clickTestStream,
 		Group:  groupName,
@@ -303,27 +301,34 @@ func (s *ClickConsumerSuite) TestDLQ_ExceedMaxDelivery() {
 		Count:  10,
 	}).Result()
 	s.Require().NoError(err)
-	s.Require().NotEmpty(pending)
+	s.Require().Len(pending, 1)
+	s.Greater(pending[0].RetryCount, int64(3), "delivery count should exceed maxDelivery=3")
 
-	// Create consumer with maxDelivery=5.
-	c := consumer.NewClickConsumer(s.rdb, svc, groupName, clickTestConsumer, 10, 5)
+	// Use short intervals so the reclaim loop fires quickly in the test environment.
+	c := consumer.NewClickConsumer(s.rdb, svc, groupName, clickTestConsumer, 10, 3).
+		WithReclaimInterval(200 * time.Millisecond).
+		WithIdleThreshold(100 * time.Millisecond).
+		WithBlockTimeout(200 * time.Millisecond)
 
 	consumerCtx, consumerCancel := context.WithCancel(ctx)
 	doneCh := make(chan error, 1)
-	go func() {
-		doneCh <- c.Run(consumerCtx)
-	}()
+	go func() { doneCh <- c.Run(consumerCtx) }()
 
-	// Wait for the reclaim loop (runs every 10s); we use a shorter interval in test by
-	// just waiting long enough for the first reclaim + DLQ transfer to happen.
-	// Note: xclaimInterval is 10s, so wait 12s for the reclaim loop to fire at least once.
-	time.Sleep(12 * time.Second)
+	// Poll until the DLQ receives the message (should happen within ~500ms).
+	var dlqMsgs []redis.XMessage
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		dlqMsgs, _ = s.rdb.XRange(ctx, clickTestDLQ, "-", "+").Result()
+		if len(dlqMsgs) > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	consumerCancel()
 	<-doneCh
 
 	// Verify message is now in DLQ.
-	dlqMsgs, err := s.rdb.XRange(ctx, clickTestDLQ, "-", "+").Result()
-	s.Require().NoError(err)
 	s.NotEmpty(dlqMsgs, "message should have been moved to DLQ")
 
 	// Verify original is ACKed (no longer in PEL).

@@ -20,14 +20,17 @@ const (
 	clickDLQ    = "stream:click-dlq"
 )
 
+const ogReadBlockTimeout = 5 * time.Second
+
 // OGConsumer reads OG fetch tasks from stream:og-fetch and delegates to OGWorkerService.
 // On either success or failure (FetchFailed already marked by the service), the message is
 // always ACKed so it never blocks the queue — OG fetch failures are non-fatal.
 type OGConsumer struct {
-	rdb       *redis.Client
-	ogService service.OGWorkerService
-	groupName string
-	consumer  string
+	rdb          *redis.Client
+	ogService    service.OGWorkerService
+	groupName    string
+	consumer     string
+	blockTimeout time.Duration // XReadGroup blocking duration
 }
 
 // NewOGConsumer creates an OGConsumer and ensures the consumer group exists.
@@ -38,11 +41,19 @@ func NewOGConsumer(rdb *redis.Client, svc service.OGWorkerService, groupName, co
 		panic(fmt.Sprintf("og_consumer: failed to create consumer group: %v", err))
 	}
 	return &OGConsumer{
-		rdb:       rdb,
-		ogService: svc,
-		groupName: groupName,
-		consumer:  consumerName,
+		rdb:          rdb,
+		ogService:    svc,
+		groupName:    groupName,
+		consumer:     consumerName,
+		blockTimeout: ogReadBlockTimeout,
 	}
+}
+
+// WithBlockTimeout overrides the XReadGroup blocking duration.
+// Intended for testing only.
+func (c *OGConsumer) WithBlockTimeout(d time.Duration) *OGConsumer {
+	c.blockTimeout = d
+	return c
 }
 
 // Run starts the main read loop. It blocks until ctx is cancelled.
@@ -63,7 +74,7 @@ func (c *OGConsumer) Run(ctx context.Context) error {
 			Consumer: c.consumer,
 			Streams:  []string{ogStream, ">"},
 			Count:    1,
-			Block:    5 * time.Second,
+			Block:    c.blockTimeout,
 		}).Result()
 		if err != nil {
 			// redis.Nil means blocking read timed out — normal, just retry.

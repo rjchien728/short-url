@@ -20,6 +20,9 @@ const (
 
 	// idleThreshold is the minimum idle time before a PEL message is reclaimed.
 	idleThreshold = 30 * time.Second
+
+	// readBlockTimeout is the XReadGroup blocking duration.
+	readBlockTimeout = 5 * time.Second
 )
 
 // ClickConsumer reads click log events from stream:click-log in batches and
@@ -27,12 +30,15 @@ const (
 // in the PEL for retry via XCLAIM. Messages that exceed maxDelivery are moved
 // to stream:click-dlq (dead letter queue) and then ACKed.
 type ClickConsumer struct {
-	rdb          *redis.Client
-	clickService service.ClickWorkerService
-	groupName    string
-	consumer     string
-	batchSize    int64
-	maxDelivery  int64
+	rdb             *redis.Client
+	clickService    service.ClickWorkerService
+	groupName       string
+	consumer        string
+	batchSize       int64
+	maxDelivery     int64
+	reclaimInterval time.Duration // how often reclaimLoop runs
+	idleThreshold   time.Duration // min idle time before a PEL message is reclaimed
+	blockTimeout    time.Duration // XReadGroup blocking duration
 }
 
 // NewClickConsumer creates a ClickConsumer and ensures the consumer group exists.
@@ -43,13 +49,37 @@ func NewClickConsumer(rdb *redis.Client, svc service.ClickWorkerService, groupNa
 		panic(fmt.Sprintf("click_consumer: failed to create consumer group: %v", err))
 	}
 	return &ClickConsumer{
-		rdb:          rdb,
-		clickService: svc,
-		groupName:    groupName,
-		consumer:     consumerName,
-		batchSize:    int64(batchSize),
-		maxDelivery:  int64(maxDelivery),
+		rdb:             rdb,
+		clickService:    svc,
+		groupName:       groupName,
+		consumer:        consumerName,
+		batchSize:       int64(batchSize),
+		maxDelivery:     int64(maxDelivery),
+		reclaimInterval: xclaimInterval,
+		idleThreshold:   idleThreshold,
+		blockTimeout:    readBlockTimeout,
 	}
+}
+
+// WithReclaimInterval overrides the reclaim loop interval.
+// Intended for testing only.
+func (c *ClickConsumer) WithReclaimInterval(d time.Duration) *ClickConsumer {
+	c.reclaimInterval = d
+	return c
+}
+
+// WithIdleThreshold overrides the PEL idle threshold used in XPendingExt and XClaim.
+// Intended for testing only.
+func (c *ClickConsumer) WithIdleThreshold(d time.Duration) *ClickConsumer {
+	c.idleThreshold = d
+	return c
+}
+
+// WithBlockTimeout overrides the XReadGroup blocking duration.
+// Intended for testing only.
+func (c *ClickConsumer) WithBlockTimeout(d time.Duration) *ClickConsumer {
+	c.blockTimeout = d
+	return c
 }
 
 // Run starts the main read loop and the XCLAIM goroutine concurrently.
@@ -73,7 +103,7 @@ func (c *ClickConsumer) Run(ctx context.Context) error {
 			Consumer: c.consumer,
 			Streams:  []string{clickStream, ">"},
 			Count:    c.batchSize,
-			Block:    5 * time.Second,
+			Block:    c.blockTimeout,
 		}).Result()
 		if err != nil {
 			if err == redis.Nil {
@@ -143,7 +173,7 @@ func (c *ClickConsumer) processBatch(ctx context.Context, msgs []redis.XMessage)
 // reclaimLoop runs on a fixed interval to reclaim idle PEL messages and move
 // messages that exceeded maxDelivery to the dead letter queue.
 func (c *ClickConsumer) reclaimLoop(ctx context.Context) {
-	ticker := time.NewTicker(xclaimInterval)
+	ticker := time.NewTicker(c.reclaimInterval)
 	defer ticker.Stop()
 
 	for {
@@ -165,7 +195,7 @@ func (c *ClickConsumer) reclaim(ctx context.Context) {
 		Start:  "-",
 		End:    "+",
 		Count:  c.batchSize,
-		Idle:   idleThreshold,
+		Idle:   c.idleThreshold,
 	}).Result()
 	if err != nil {
 		logger.Error(ctx, "click_consumer: XPendingExt error", "error", err)
@@ -184,7 +214,7 @@ func (c *ClickConsumer) reclaim(ctx context.Context) {
 			Stream:   clickStream,
 			Group:    c.groupName,
 			Consumer: c.consumer,
-			MinIdle:  idleThreshold,
+			MinIdle:  c.idleThreshold,
 			Messages: []string{p.ID},
 		}).Err(); err != nil {
 			logger.Error(ctx, "click_consumer: XClaim failed", "msg_id", p.ID, "error", err)

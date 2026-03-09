@@ -47,7 +47,7 @@ type ConsumerConfig struct {
 	ClickGroupName string // CONSUMER_CLICK_GROUP_NAME, default "click-worker-group"
 	ConsumerName   string // CONSUMER_NAME, default "worker-1"
 	ClickBatchSize int    // CONSUMER_CLICK_BATCH_SIZE, default 100
-	MaxDelivery    int    // CONSUMER_MAX_DELIVERY, default 5
+	MaxDelivery    int    // CONSUMER_MAX_DELIVERY, default 3
 }
 
 // Load configuration following this priority:
@@ -69,7 +69,7 @@ func Load() (*Config, error) {
 	v.SetDefault("CONSUMER_CLICK_GROUP_NAME", "click-worker-group")
 	v.SetDefault("CONSUMER_NAME", "worker-1")
 	v.SetDefault("CONSUMER_CLICK_BATCH_SIZE", 100)
-	v.SetDefault("CONSUMER_MAX_DELIVERY", 5)
+	v.SetDefault("CONSUMER_MAX_DELIVERY", 3)
 
 	// 2. Read .env file (optional, for local development)
 	v.SetConfigFile(".env")
