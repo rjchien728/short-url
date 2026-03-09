@@ -2,6 +2,56 @@
 
 一個具備高可擴展性、高效能與精確歸因分析的社群短網址服務。系統採用 Go 實作，並透過 Redis Streams 實現非同步任務處理。
 
+## 快速開始
+
+### 本機開發
+
+需求：Go 1.24+、Docker
+
+```bash
+make init         # 複製 .env.example → .env，啟動 pg + redis
+make migrate-up   # 執行 DB migration
+make dev          # 同時啟動 api + worker（Ctrl+C 停止）
+```
+
+其他常用指令：
+
+```bash
+make docker-up    # 啟動 infra（db + redis）
+make docker-down  # 停止 infra
+make docker-logs  # 查看 infra logs
+make test         # 跑 unit tests
+```
+
+### VM 部署（AMD64，Docker Compose）
+
+需求：Docker、Git
+
+```bash
+git clone <repo>
+cp .env.dev .env              # 以 VM 範本建立 .env
+# 編輯 .env，填入 DB_PASSWORD、APP_ID_OBFUSCATION_SALT、SERVER_BASE_URL 等必填項目
+make deploy                   # build image + 啟動全部服務（infra → migrate → api + worker）
+```
+
+更新版本：
+
+```bash
+git pull
+make deploy                   # 重新 build 並重啟有變動的服務
+```
+
+其他部署指令：
+
+```bash
+make deploy-down  # 停止 app 服務（api、worker），保留 infra（db、redis）
+make deploy-logs  # 查看所有服務 logs
+```
+
+> **注意**：`.env` 中 DB 與 Redis 的 host 在 VM 上必須使用 Docker Compose service name（`db`、`redis`），而非 `localhost`。詳見 `.env.dev` 內的說明。
+
+---
+
 ## 系統架構
 
 系統分為兩個主要執行單元：

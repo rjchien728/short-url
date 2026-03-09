@@ -1,5 +1,6 @@
 # Local development config (contains secrets)
-.env
+.env*
+!.env.example
 .devcontainer/
 
 # Go build output

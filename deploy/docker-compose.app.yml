@@ -1,0 +1,32 @@
+services:
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.migrate
+    env_file: ../.env
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    env_file: ../.env
+    ports:
+      - "${PORT:-8080}:8080"
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    env_file: ../.env
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
