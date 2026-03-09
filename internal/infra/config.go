@@ -38,6 +38,8 @@ type DatabaseConfig struct {
 }
 
 // RedisConfig holds Redis connection settings.
+// URL has no mapstructure tag because this struct is reused for both Cache (REDIS_CACHE_URL)
+// and Stream (REDIS_STREAM_URL); the field is populated manually via v.GetString().
 type RedisConfig struct {
 	URL string
 }
@@ -96,7 +98,7 @@ func Load() (*Config, error) {
 	cfg.Database = DatabaseConfig{
 		DSN:          v.GetString("DB_DSN"),
 		MaxOpenConns: v.GetInt("DB_MAX_OPEN_CONNS"),
-		MaxIdleConns: v.GetInt("DB_MAX_IDLE_CONns"),
+		MaxIdleConns: v.GetInt("DB_MAX_IDLE_CONNS"),
 	}
 	cfg.Cache = RedisConfig{
 		URL: v.GetString("REDIS_CACHE_URL"),

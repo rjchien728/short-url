@@ -1,8 +1,9 @@
 package handler
 
 import (
+	"bytes"
 	"errors"
-	"fmt"
+	"html/template"
 	"net/http"
 	"time"
 
@@ -17,17 +18,18 @@ import (
 
 // ogHTMLTemplate is the HTML page returned to social bots.
 // It contains OG meta tags and a meta-refresh redirect to the original URL.
-const ogHTMLTemplate = `<!DOCTYPE html>
+// html/template is used to auto-escape all values and prevent XSS.
+var ogHTMLTemplate = template.Must(template.New("og").Parse(`<!DOCTYPE html>
 <html>
 <head>
-<meta property="og:title" content="%s" />
-<meta property="og:description" content="%s" />
-<meta property="og:image" content="%s" />
-<meta property="og:site_name" content="%s" />
-<meta http-equiv="refresh" content="0; url=%s" />
+<meta property="og:title" content="{{.Title}}" />
+<meta property="og:description" content="{{.Description}}" />
+<meta property="og:image" content="{{.Image}}" />
+<meta property="og:site_name" content="{{.SiteName}}" />
+<meta http-equiv="refresh" content="0; url={{.LongURL}}" />
 </head>
 <body></body>
-</html>`
+</html>`))
 
 // RegisterRedirectRoutes mounts the short-code redirect endpoint.
 func RegisterRedirectRoutes(e *echo.Echo, svc service.RedirectService) {
@@ -97,22 +99,37 @@ func (h *redirectHandler) redirect(c echo.Context) error {
 	return c.Redirect(http.StatusFound, shortURL.LongURL)
 }
 
+// ogTemplateData holds values injected into ogHTMLTemplate.
+type ogTemplateData struct {
+	Title       string
+	Description string
+	Image       string
+	SiteName    string
+	LongURL     string
+}
+
 // buildOGHTML returns an HTML page with OG meta tags for social crawlers.
+// All values are escaped by html/template to prevent XSS.
 // Falls back to LongURL when OGMetadata is missing or fetch failed.
 func buildOGHTML(s *entity.ShortURL) string {
-	title := s.LongURL
-	description := ""
-	image := ""
-	siteName := ""
+	data := ogTemplateData{
+		Title:   s.LongURL,
+		LongURL: s.LongURL,
+	}
 
 	if s.OGMetadata != nil && !s.OGMetadata.FetchFailed {
 		if s.OGMetadata.Title != "" {
-			title = s.OGMetadata.Title
+			data.Title = s.OGMetadata.Title
 		}
-		description = s.OGMetadata.Description
-		image = s.OGMetadata.Image
-		siteName = s.OGMetadata.SiteName
+		data.Description = s.OGMetadata.Description
+		data.Image = s.OGMetadata.Image
+		data.SiteName = s.OGMetadata.SiteName
 	}
 
-	return fmt.Sprintf(ogHTMLTemplate, title, description, image, siteName, s.LongURL)
+	var buf bytes.Buffer
+	if err := ogHTMLTemplate.Execute(&buf, data); err != nil {
+		// Template execution should never fail with a valid struct; fall back to empty page.
+		return "<!DOCTYPE html><html><body></body></html>"
+	}
+	return buf.String()
 }
