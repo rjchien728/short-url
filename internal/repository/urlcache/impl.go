@@ -13,7 +13,19 @@ import (
 )
 
 const (
-	cacheTTL  = 24 * time.Hour
+	// CacheTTL is the base TTL for a cached short URL.
+	// Every cache hit resets the TTL (sliding window), so hot URLs stay cached
+	// indefinitely while cold URLs expire after one idle period.
+	CacheTTL = 1 * time.Hour
+
+	// negativeTTL is the TTL for negative-cache entries (shortCode not found in DB).
+	// Short enough that a newly created URL becomes visible quickly.
+	negativeTTL = 1 * time.Minute
+
+	// negativeMarker is the sentinel value stored for a negative cache entry.
+	// It must not be valid JSON for a ShortURL, so a plain string works.
+	negativeMarker = "NOT_FOUND"
+
 	keyPrefix = "shorturl:"
 )
 
@@ -28,9 +40,13 @@ func NewCache(rdb *redis.Client) *Cache {
 }
 
 // Get retrieves a ShortURL from cache by short code.
-// Returns (nil, nil) on cache miss — not an error.
+//   - Cache miss  → (nil, nil)
+//   - Negative hit → (nil, entity.ErrNotFound)
+//   - Normal hit  → (*ShortURL, nil), and the TTL is refreshed (sliding window)
 func (c *Cache) Get(ctx context.Context, shortCode string) (*entity.ShortURL, error) {
-	data, err := c.rdb.Get(ctx, keyPrefix+shortCode).Bytes()
+	key := keyPrefix + shortCode
+
+	data, err := c.rdb.Get(ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil // cache miss
@@ -38,22 +54,41 @@ func (c *Cache) Get(ctx context.Context, shortCode string) (*entity.ShortURL, er
 		return nil, fmt.Errorf("urlcache.Get: %w", err)
 	}
 
+	// Negative cache sentinel — shortCode is known to not exist.
+	if string(data) == negativeMarker {
+		return nil, entity.ErrNotFound
+	}
+
 	var url entity.ShortURL
 	if err := json.Unmarshal(data, &url); err != nil {
 		return nil, fmt.Errorf("urlcache.Get: unmarshal: %w", err)
 	}
+
+	// Sliding window: reset TTL on every hit so hot URLs stay in cache.
+	// Fire-and-forget; a failed Expire is non-fatal (key still valid until old TTL).
+	_ = c.rdb.Expire(ctx, key, CacheTTL).Err()
+
 	return &url, nil
 }
 
-// Set stores a ShortURL in cache with a fixed TTL of 24 hours.
-func (c *Cache) Set(ctx context.Context, shortCode string, url *entity.ShortURL) error {
+// Set stores a ShortURL in cache with the provided TTL.
+func (c *Cache) Set(ctx context.Context, shortCode string, url *entity.ShortURL, ttl time.Duration) error {
 	data, err := json.Marshal(url)
 	if err != nil {
 		return fmt.Errorf("urlcache.Set: marshal: %w", err)
 	}
 
-	if err := c.rdb.Set(ctx, keyPrefix+shortCode, data, cacheTTL).Err(); err != nil {
+	if err := c.rdb.Set(ctx, keyPrefix+shortCode, data, ttl).Err(); err != nil {
 		return fmt.Errorf("urlcache.Set: %w", err)
+	}
+	return nil
+}
+
+// SetNotFound caches a negative entry for shortCode with a short TTL.
+// Subsequent Get calls for this code will return entity.ErrNotFound without hitting the DB.
+func (c *Cache) SetNotFound(ctx context.Context, shortCode string) error {
+	if err := c.rdb.Set(ctx, keyPrefix+shortCode, negativeMarker, negativeTTL).Err(); err != nil {
+		return fmt.Errorf("urlcache.SetNotFound: %w", err)
 	}
 	return nil
 }

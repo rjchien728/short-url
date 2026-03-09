@@ -12,6 +12,7 @@ import (
 
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/mock"
+	"github.com/rjchien728/short-url/internal/repository/urlcache"
 	"github.com/rjchien728/short-url/internal/service/redirect"
 )
 
@@ -60,7 +61,7 @@ func TestRedirectService_Resolve_CacheMiss_DBHit(t *testing.T) {
 
 	mockCache.EXPECT().Get(ctx, "abc1234567").Return(nil, nil) // cache miss
 	mockRepo.EXPECT().FindByShortCode(ctx, "abc1234567").Return(fromDB, nil)
-	mockCache.EXPECT().Set(ctx, "abc1234567", fromDB).Return(nil) // backfill
+	mockCache.EXPECT().Set(ctx, "abc1234567", fromDB, urlcache.CacheTTL).Return(nil) // backfill
 
 	result, err := svc.Resolve(ctx, "abc1234567")
 
@@ -68,14 +69,31 @@ func TestRedirectService_Resolve_CacheMiss_DBHit(t *testing.T) {
 	assert.Equal(t, fromDB, result)
 }
 
-func TestRedirectService_Resolve_NotFound(t *testing.T) {
+func TestRedirectService_Resolve_NegativeCacheHit(t *testing.T) {
 	svc, mockRepo, mockCache, _ := newService(t)
 	ctx := context.Background()
 
-	mockCache.EXPECT().Get(ctx, "notexist1").Return(nil, nil)
-	mockRepo.EXPECT().FindByShortCode(ctx, "notexist1").Return(nil, entity.ErrNotFound)
+	// cache.Get returns ErrNotFound → negative cache hit
+	mockCache.EXPECT().Get(ctx, "notexist1").Return(nil, entity.ErrNotFound)
+	// DB must NOT be called
+	mockRepo.EXPECT().FindByShortCode(gomock.Any(), gomock.Any()).Times(0)
 
 	_, err := svc.Resolve(ctx, "notexist1")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, entity.ErrNotFound))
+}
+
+func TestRedirectService_Resolve_NotFound_WritesNegativeCache(t *testing.T) {
+	svc, mockRepo, mockCache, _ := newService(t)
+	ctx := context.Background()
+
+	mockCache.EXPECT().Get(ctx, "notexist2").Return(nil, nil) // cache miss
+	mockRepo.EXPECT().FindByShortCode(ctx, "notexist2").Return(nil, entity.ErrNotFound)
+	// negative cache must be populated
+	mockCache.EXPECT().SetNotFound(ctx, "notexist2").Return(nil)
+
+	_, err := svc.Resolve(ctx, "notexist2")
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, entity.ErrNotFound))

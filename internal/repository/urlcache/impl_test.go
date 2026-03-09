@@ -2,6 +2,7 @@ package urlcache_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func (s *URLCacheSuite) TestSet_Get_HappyPath() {
 		CreatedAt: time.Now(),
 	}
 
-	err := s.cache.Set(ctx, url.ShortCode, url)
+	err := s.cache.Set(ctx, url.ShortCode, url, urlcache.CacheTTL)
 	s.Require().NoError(err)
 
 	got, err := s.cache.Get(ctx, url.ShortCode)
@@ -83,7 +84,7 @@ func (s *URLCacheSuite) TestDelete_RemovesKey() {
 		CreatedAt: time.Now(),
 	}
 
-	s.Require().NoError(s.cache.Set(ctx, url.ShortCode, url))
+	s.Require().NoError(s.cache.Set(ctx, url.ShortCode, url, urlcache.CacheTTL))
 
 	// Confirm it exists.
 	got, err := s.cache.Get(ctx, url.ShortCode)
@@ -113,7 +114,7 @@ func (s *URLCacheSuite) TestSet_IncludesOGMetadata() {
 		},
 	}
 
-	s.Require().NoError(s.cache.Set(ctx, url.ShortCode, url))
+	s.Require().NoError(s.cache.Set(ctx, url.ShortCode, url, urlcache.CacheTTL))
 
 	got, err := s.cache.Get(ctx, url.ShortCode)
 	s.Require().NoError(err)
@@ -121,6 +122,47 @@ func (s *URLCacheSuite) TestSet_IncludesOGMetadata() {
 	s.Require().NotNil(got.OGMetadata)
 	s.Equal("My Title", got.OGMetadata.Title)
 	s.Equal("My Site", got.OGMetadata.SiteName)
+}
+
+func (s *URLCacheSuite) TestGet_SlidingTTL_RefreshedOnHit() {
+	ctx := context.Background()
+
+	url := &entity.ShortURL{
+		ID:        4001,
+		ShortCode: "sliding001",
+		LongURL:   "https://example.com/sliding",
+		CreatedAt: time.Now(),
+	}
+
+	s.Require().NoError(s.cache.Set(ctx, url.ShortCode, url, urlcache.CacheTTL))
+
+	// Advance time by half the TTL.
+	s.mr.FastForward(urlcache.CacheTTL / 2)
+
+	// A Get should refresh the TTL.
+	got, err := s.cache.Get(ctx, url.ShortCode)
+	s.Require().NoError(err)
+	s.Require().NotNil(got)
+
+	// After another full TTL from when we started, the key should still be alive
+	// because the hit reset the TTL.
+	s.mr.FastForward(urlcache.CacheTTL / 2)
+
+	got, err = s.cache.Get(ctx, url.ShortCode)
+	s.Require().NoError(err)
+	s.Require().NotNil(got, "key should still be alive after sliding TTL refresh")
+}
+
+func (s *URLCacheSuite) TestSetNotFound_Get_ReturnsErrNotFound() {
+	ctx := context.Background()
+	shortCode := "ghost00001"
+
+	s.Require().NoError(s.cache.SetNotFound(ctx, shortCode))
+
+	got, err := s.cache.Get(ctx, shortCode)
+	s.Require().Error(err)
+	s.True(errors.Is(err, entity.ErrNotFound), "expected ErrNotFound for negative cache hit")
+	s.Nil(got)
 }
 
 func TestURLCache(t *testing.T) {

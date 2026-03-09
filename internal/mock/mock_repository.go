@@ -12,6 +12,7 @@ package mock
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	entity "github.com/rjchien728/short-url/internal/domain/entity"
 	gomock "go.uber.org/mock/gomock"
@@ -176,17 +177,31 @@ func (mr *MockURLCacheMockRecorder) Get(ctx, shortCode any) *gomock.Call {
 }
 
 // Set mocks base method.
-func (m *MockURLCache) Set(ctx context.Context, shortCode string, url *entity.ShortURL) error {
+func (m *MockURLCache) Set(ctx context.Context, shortCode string, url *entity.ShortURL, ttl time.Duration) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Set", ctx, shortCode, url)
+	ret := m.ctrl.Call(m, "Set", ctx, shortCode, url, ttl)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Set indicates an expected call of Set.
-func (mr *MockURLCacheMockRecorder) Set(ctx, shortCode, url any) *gomock.Call {
+func (mr *MockURLCacheMockRecorder) Set(ctx, shortCode, url, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Set", reflect.TypeOf((*MockURLCache)(nil).Set), ctx, shortCode, url)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Set", reflect.TypeOf((*MockURLCache)(nil).Set), ctx, shortCode, url, ttl)
+}
+
+// SetNotFound mocks base method.
+func (m *MockURLCache) SetNotFound(ctx context.Context, shortCode string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetNotFound", ctx, shortCode)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetNotFound indicates an expected call of SetNotFound.
+func (mr *MockURLCacheMockRecorder) SetNotFound(ctx, shortCode any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetNotFound", reflect.TypeOf((*MockURLCache)(nil).SetNotFound), ctx, shortCode)
 }
 
 // MockEventPublisher is a mock of EventPublisher interface.
