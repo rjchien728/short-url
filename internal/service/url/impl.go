@@ -11,7 +11,6 @@ import (
 	"github.com/rjchien728/short-url/internal/domain/entity"
 	"github.com/rjchien728/short-url/internal/domain/repository"
 	domainservice "github.com/rjchien728/short-url/internal/domain/service"
-	"github.com/rjchien728/short-url/internal/pkg/base58"
 	"github.com/rjchien728/short-url/internal/pkg/logger"
 	"github.com/rjchien728/short-url/internal/pkg/snowflake"
 )
@@ -56,7 +55,7 @@ func (s *Service) Create(ctx context.Context, req domainservice.CreateURLRequest
 			return nil, fmt.Errorf("urlsvc.Create: generate id: %w", genErr)
 		}
 
-		shortCode := base58.Encode(id)
+		shortCode := s.idGen.ShortCode(id)
 		url = &entity.ShortURL{
 			ID:        id,
 			ShortCode: shortCode,

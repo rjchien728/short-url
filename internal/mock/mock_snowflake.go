@@ -53,3 +53,17 @@ func (mr *MockIDGeneratorMockRecorder) Generate() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Generate", reflect.TypeOf((*MockIDGenerator)(nil).Generate))
 }
+
+// ShortCode mocks base method.
+func (m *MockIDGenerator) ShortCode(id int64) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ShortCode", id)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// ShortCode indicates an expected call of ShortCode.
+func (mr *MockIDGeneratorMockRecorder) ShortCode(id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShortCode", reflect.TypeOf((*MockIDGenerator)(nil).ShortCode), id)
+}

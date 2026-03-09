@@ -62,7 +62,7 @@ func main() {
 	urlRepo := shorturl.NewRepository(dbPool)
 	cache := urlcache.NewCache(cacheRdb)
 	publisher := eventpub.NewPublisher(streamRdb)
-	idGen := snowflake.New()
+	idGen := snowflake.New(cfg.App.IDObfuscationSalt)
 
 	// --- Service ---
 	urlService := urlsvc.New(urlRepo, cache, publisher, idGen)

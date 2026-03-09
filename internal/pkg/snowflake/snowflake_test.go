@@ -10,7 +10,7 @@ import (
 )
 
 func TestGenerator_Generate_Monotonic(t *testing.T) {
-	g := New()
+	g := New(0)
 	const count = 10000
 
 	prev := int64(0)
@@ -23,7 +23,7 @@ func TestGenerator_Generate_Monotonic(t *testing.T) {
 }
 
 func TestGenerator_Generate_NoCollision(t *testing.T) {
-	g := New()
+	g := New(0)
 	const count = 10000
 
 	seen := make(map[int64]struct{}, count)
@@ -37,7 +37,7 @@ func TestGenerator_Generate_NoCollision(t *testing.T) {
 }
 
 func TestGenerator_Generate_ConcurrentNoCollision(t *testing.T) {
-	g := New()
+	g := New(0)
 	const goroutines = 10
 	const perGoroutine = 1000
 
@@ -69,7 +69,7 @@ func TestGenerator_Generate_ConcurrentNoCollision(t *testing.T) {
 }
 
 func TestGenerator_Generate_RespectsEpoch(t *testing.T) {
-	g := New()
+	g := New(0)
 	id, err := g.Generate()
 	require.NoError(t, err)
 
@@ -86,7 +86,7 @@ func TestGenerator_Generate_RespectsEpoch(t *testing.T) {
 }
 
 func TestGenerator_Generate_SequenceBits(t *testing.T) {
-	g := New()
+	g := New(0)
 
 	// sequence is the lower 12 bits
 	id, err := g.Generate()

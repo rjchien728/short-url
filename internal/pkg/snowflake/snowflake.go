@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/rjchien728/short-url/internal/pkg/base58"
 )
 
 const (
@@ -18,9 +20,14 @@ const (
 	maxSequence int64 = (1 << sequenceBits) - 1
 )
 
-// IDGenerator defines the interface for generating unique int64 IDs.
+// IDGenerator defines the interface for generating unique int64 IDs
+// and encoding them to short codes.
 type IDGenerator interface {
+	// Generate produces a unique, monotonically increasing int64 ID for use as a DB primary key.
 	Generate() (int64, error)
+	// ShortCode encodes a raw ID into an obfuscated Base58 short code.
+	// The obfuscation salt is held internally; callers do not need to know it.
+	ShortCode(id int64) string
 }
 
 // Generator is a simplified Snowflake ID generator.
@@ -31,11 +38,19 @@ type Generator struct {
 	mu       sync.Mutex
 	lastMS   int64 // last millisecond timestamp used
 	sequence int64 // current sequence number within the same millisecond
+	salt     int64 // salt for ID obfuscation; kept internal, not exposed to callers
 }
 
-// New creates a new Snowflake Generator.
-func New() *Generator {
-	return &Generator{}
+// New creates a new Snowflake Generator with the given obfuscation salt.
+// The salt should be a secret random int64 set per deployment.
+func New(salt int64) *Generator {
+	return &Generator{salt: salt}
+}
+
+// ShortCode obfuscates id and encodes it to a 10-character Base58 string.
+// The raw id (DB primary key) is never modified; only the display code is obfuscated.
+func (g *Generator) ShortCode(id int64) string {
+	return base58.Encode(Obfuscate(id, g.salt))
 }
 
 // Generate produces a unique, monotonically increasing int64 ID.
