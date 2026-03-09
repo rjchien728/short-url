@@ -1,112 +1,216 @@
 # Short URL Service
 
-一個具備高可擴展性、高效能與精確歸因分析的社群短網址服務。系統採用 Go 實作，並透過 Redis Streams 實現非同步任務處理。
+A URL shortener service built with Go, designed for social sharing with async background processing via Redis Streams.
 
-## 快速開始
+---
 
-### 本機開發
+## Architecture
 
-需求：Go 1.24+、Docker
-
-```bash
-make init         # 複製 .env.example → .env，啟動 pg + redis
-make migrate-up   # 執行 DB migration
-make dev          # 同時啟動 api + worker（Ctrl+C 停止）
+```
+                    ┌─────────────────────────────┐
+   HTTP Request ──► │         API Server          │
+                    │  POST /v1/urls               │
+                    │  GET  /:shortCode            │◄──► Redis Cache (db 0)
+                    └──────────────┬──────────────┘          │
+                                   │ publish                  │ cache miss
+                                   ▼                          ▼
+                          Redis Streams (db 1)           PostgreSQL
+                    ┌──────────────────────────┐
+                    │  stream:og-fetch         │
+                    │  stream:click-log        │
+                    └──────────────┬───────────┘
+                                   │ consume
+                                   ▼
+                    ┌─────────────────────────────┐
+                    │      Background Worker      │
+                    │  OG Fetch Worker            │──► PostgreSQL
+                    │  Click Log Worker           │──► PostgreSQL
+                    └─────────────────────────────┘
 ```
 
-其他常用指令：
+### Processes
 
-```bash
-make docker-up    # 啟動 infra（db + redis）
-make docker-down  # 停止 infra
-make docker-logs  # 查看 infra logs
-make test         # 跑 unit tests
+| Process | Entry Point | Responsibility |
+|---------|-------------|----------------|
+| API Server | `cmd/api` | Handle short URL creation and redirects |
+| Background Worker | `cmd/worker` | Consume Redis Streams for async task processing |
+
+### Background Workers
+
+| Worker | Stream | Description |
+|--------|--------|-------------|
+| OG Fetch | `stream:og-fetch` | Scrapes Open Graph metadata from the destination URL after a short link is created |
+| Click Log | `stream:click-log` | Persists click events to PostgreSQL in batches. Unprocessed messages stay in PEL for retry; messages exceeding the retry limit are moved to `stream:click-dlq` |
+
+> **Note — Intentional simplifications**
+>
+> This project prioritises implementation simplicity over production scale:
+> - **Message queue**: Redis Streams is used instead of Kafka or Cloud Pub/Sub.
+> - **Analytics storage**: Click logs are written to PostgreSQL instead of a dedicated OLAP store (e.g. BigQuery, ClickHouse).
+
+---
+
+## Database Schema
+
+### `short_url`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `BIGINT` | Snowflake ID (primary key) |
+| `short_code` | `VARCHAR(10)` | Base58-encoded unique code |
+| `long_url` | `TEXT` | Original destination URL |
+| `creator_id` | `VARCHAR(50)` | Identifier of the creator |
+| `og_metadata` | `JSONB` | Open Graph metadata (title, description, image, site_name, fetch_failed) |
+| `expires_at` | `TIMESTAMPTZ` | Optional expiry time |
+| `created_at` | `TIMESTAMPTZ` | Creation timestamp |
+
+### `click_log`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `UUID` | UUID v7 (primary key) |
+| `short_url_id` | `BIGINT` | References `short_url.id` |
+| `short_code` | `VARCHAR(10)` | Denormalised for query convenience |
+| `creator_id` | `VARCHAR(50)` | Copied from the short URL record |
+| `referral_id` | `VARCHAR(50)` | Optional referral tracking ID (`?ref=`) |
+| `referrer` | `TEXT` | HTTP `Referer` header |
+| `user_agent` | `TEXT` | HTTP `User-Agent` header |
+| `ip_address` | `VARCHAR(45)` | Client IP (supports IPv6) |
+| `is_bot` | `BOOLEAN` | Bot detection result |
+| `created_at` | `TIMESTAMPTZ` | Click timestamp |
+
+---
+
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/healthz` | Health check |
+| `POST` | `/v1/urls` | Create a short URL |
+| `GET` | `/:shortCode` | Redirect to the destination URL |
+
+### `POST /v1/urls`
+
+**Request**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `long_url` | string | yes | The destination URL to shorten |
+| `creator_id` | string | yes | Identifier of the creator |
+
+```json
+{
+  "long_url": "https://example.com/some/very/long/path",
+  "creator_id": "user_01"
+}
 ```
 
-### VM 部署（AMD64，Docker Compose）
+**Response `201`**
 
-需求：Docker、Git
+| Field | Type | Description |
+|-------|------|-------------|
+| `short_url` | string | Full shortened URL (e.g. `http://localhost:8080/aB3xYz1234`) |
+| `long_url` | string | Original URL |
+| `creator_id` | string | Creator identifier |
+| `created_at` | string | ISO 8601 timestamp |
 
-```bash
-git clone <repo>
-cp .env.dev .env              # 以 VM 範本建立 .env
-# 編輯 .env，填入 DB_PASSWORD、APP_ID_OBFUSCATION_SALT、SERVER_BASE_URL 等必填項目
-make deploy                   # build image + 啟動全部服務（infra → migrate → api + worker）
+```json
+{
+  "short_url": "http://localhost:8080/aB3xYz1234",
+  "long_url": "https://example.com/some/very/long/path",
+  "creator_id": "user_01",
+  "created_at": "2026-03-10T00:00:00Z"
+}
 ```
 
-更新版本：
+### `GET /:shortCode`
+
+| Scenario | Status | Behaviour |
+|----------|--------|-----------|
+| Normal browser request | `302` | Redirect to `long_url` |
+| Bot / social crawler | `200` | Returns an HTML page with OG meta tags for link previews |
+| Not found | `404` | `{"error": "not_found"}` |
+| Expired | `410` | `{"error": "expired"}` |
+
+---
+
+## Local Development
+
+**Prerequisites**: Go 1.24+, Docker
+
+```bash
+# 1. Initialise environment (copies .env.example → .env, starts infra, runs migrations)
+make local-init
+
+# 2. Start API + Worker together (Ctrl+C to stop)
+make dev
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `make local-init` | One-shot setup: copy `.env`, start infra, run migrations |
+| `make dev` | Start API + Worker (Ctrl+C to stop both) |
+| `make run-api` | Start API server only |
+| `make run-worker` | Start Worker only |
+| `make infra-up` | Start PostgreSQL + Redis containers |
+| `make infra-down` | Stop PostgreSQL + Redis containers |
+| `make migrate-up` | Run DB migrations |
+| `make migrate-down` | Rollback DB migrations |
+| `make test` | Unit tests (no external dependencies required) |
+| `make test-integration` | Integration tests (requires running infra) |
+| `make mock` | Regenerate mock files |
+
+---
+
+## VM Deployment (Docker Compose)
+
+**Prerequisites**: Docker, Git (no Go installation required)
+
+```bash
+# 1. Clone and enter the repo
+git clone <repo-url> && cd short-url
+
+# 2. Create and edit .env (see required fields below)
+cp .env.example .env
+
+# 3. Start infra, run migrations, build and start services
+make infra-up
+make migrate-up
+make build-images
+make app-up
+```
+
+**To update:**
 
 ```bash
 git pull
-make deploy                   # 重新 build 並重啟有變動的服務
+make build-images
+make app-up
 ```
 
-其他部署指令：
+### Required `.env` Fields
 
-```bash
-make deploy-down  # 停止 app 服務（api、worker），保留 infra（db、redis）
-make deploy-logs  # 查看所有服務 logs
-```
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `SERVER_BASE_URL` | `http://your-vm-ip:8080` | Used to construct the returned short URL |
+| `APP_ID_OBFUSCATION_SALT` | `6364136223846793005` | 64-bit integer for ID obfuscation |
+| `DB_PASSWORD` | `your-password` | PostgreSQL password |
+| `DB_DSN` | `postgres://user:pw@db:5432/shorturl?sslmode=disable` | Use service name `db`, not `localhost` |
+| `REDIS_CACHE_URL` | `redis://redis:6379/0` | Use service name `redis`, not `localhost` |
+| `REDIS_STREAM_URL` | `redis://redis:6379/1` | Use service name `redis`, not `localhost` |
 
-> **注意**：`.env` 中 DB 與 Redis 的 host 在 VM 上必須使用 Docker Compose service name（`db`、`redis`），而非 `localhost`。詳見 `.env.dev` 內的說明。
+All other variables have sensible defaults in `.env.example`.
 
----
+### Commands
 
-## 系統架構
-
-系統分為兩個主要執行單元：
-- **API Server (`cmd/api`)**: 負責處理短網址的建立與重新導向（Redirect）。
-- **Background Worker (`cmd/worker`)**: 負責處理耗時的非同步任務，包括連結預覽抓取與點擊數據分析。
-
----
-
-## 背景服務 (Background Workers)
-
-背景服務基於 **Redis Streams** 與 **Consumer Groups (消費者組)** 機制實作，確保任務的分散式處理與高可靠性。
-
-### 1. OG Fetch Worker (連結預覽抓取)
-此業務線負責在短網址建立後，非同步抓取目標網頁的 Open Graph (OG) 標籤。
-
-- **Stream**: `stream:og-fetch`
-- **運作流程**:
-    1. 當 API 成功建立短網址後，發送任務至 Stream。
-    2. Worker 領取任務並訪問目標網址。
-    3. 解析 HTML 中的標題、縮圖與描述（最多重試 3 次）。
-    4. **成功**: 更新資料庫中的 `og_metadata`，並主動刪除 Redis 快取，使下次訪問讀取到最新的 OG 資訊。
-    5. **失敗**: 若重試耗盡仍無法抓取，則標記 `fetch_failed: true`、更新資料庫，並同樣清除快取。
-- **特點**: OG 抓取失敗視為「非致命錯誤」，不應阻塞或卡住任務隊列。快取清除失敗同樣為非致命，TTL 到期後自然失效。
-
-### 2. Click Log Worker (點擊數據分析)
-此業務線負責將每次短網址的點擊數據持久化至資料庫，支援精確的行銷歸因分析。
-
-- **Stream**: `stream:click-log`
-- **運作流程**:
-    1. 每次 Redirect 發生時，API Server 會發送點擊事件。
-    2. Worker 採用 **Batch Processing (批次處理)**，一次讀取多筆訊息（如 100 筆）後批次寫入資料庫，以極大化寫入效能。
-    3. **PEL (Pending Entries List)**: 訊息讀取後進入 PEL 狀態，直到收到 `XACK` 才會移除。
-    4. **可靠性機制**:
-        - **XCLAIM**: 若某個 Worker 當機導致訊息卡在 PEL 超過 30 秒，其他 Worker 會重新認領並重試。
-        - **DLQ (Dead Letter Queue)**: 若同一訊息重試超過 5 次（毒藥訊息），則移至 `stream:click-dlq` 隔離，並記錄 Error Log 供人工排查。
-- **特點**: 點擊數據視為「重要資產」，透過重試與 DLQ 機制確保數據「不遺失」。
-
----
-
-## 核心技術機制
-
-### 消費者組 (Consumer Groups) 邏輯
-系統利用消費者組達成以下目標：
-- **負載均衡**: 同一組內的多個 Worker 實例會自動分配任務，一筆訊息只會被一個實例處理。
-- **業務隔離**: `og-group` 與 `click-group` 擁有獨立的消費進度，互不干擾。
-- **進度追蹤**: Redis 自動記錄每個組的最後消費位置，即使服務重啟也能從中斷處繼續。
-
-### 快取策略 (Cache-Aside)
-短網址的重新導向採用 Cache-Aside 模式，以減少資料庫查詢壓力：
-
-1. **讀取**: 優先查 Redis 快取（TTL 24 小時）；未命中時查資料庫並回填快取。
-2. **寫入**: 短網址建立時不預先寫入快取，首次訪問才觸發回填。
-3. **失效**: OG Worker 寫回 `og_metadata` 後，主動刪除對應快取鍵，確保 Bot 下次訪問能拿到最新 OG 資訊，而非初始的 nil 版本。
-
-### 數據保全策略
-1. **At-least-once Delivery**: 透過 `XACK` 確認機制，保證每筆任務至少被成功處理一次。
-2. **Fail-safe**: 點擊事件發送至 Redis 失敗時，API Server 僅記錄錯誤日誌，不影響使用者的重新導向體驗。
-3. **隔離與觀察**: 透過 `click-dlq` 隔離故障資料，維持系統在異常發生時的持續運作能力。
+| Command | Description |
+|---------|-------------|
+| `make infra-up` | Start PostgreSQL + Redis |
+| `make infra-down` | Stop PostgreSQL + Redis |
+| `make migrate-up` | Run DB migrations |
+| `make build-images` | Build Docker images for API and Worker |
+| `make app-up` | Start API + Worker containers |
+| `make app-down` | Stop API + Worker containers (infra keeps running) |
+| `make app-logs` | Tail logs for API + Worker |
