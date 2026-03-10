@@ -87,10 +87,17 @@ lint: ## Run golangci-lint
 	golangci-lint run
 
 # ==============================================================================
-# 6. Containerized Application (Deployment)
+# 6. Build & Deployment
 # ==============================================================================
 
-.PHONY: build-images app-up app-down app-logs
+.PHONY: build-linux build-images app-up app-down app-logs
+
+build-linux: ## Cross-compile API and Worker binaries for Linux amd64
+	@mkdir -p bin
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/api ./cmd/api
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/worker ./cmd/worker
+	@echo "Binaries built: bin/api, bin/worker"
+
 build-images: ## Build Docker images for API and Worker
 	$(COMPOSE_APP) build
 
