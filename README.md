@@ -77,6 +77,7 @@ A URL shortener service built with Go, designed for social sharing with async ba
 | `user_agent` | `TEXT` | HTTP `User-Agent` header |
 | `ip_address` | `VARCHAR(45)` | Client IP (supports IPv6) |
 | `is_bot` | `BOOLEAN` | Bot detection result |
+| `country_code` | `VARCHAR(2)` | ISO 3166-1 alpha-2 country from GeoIP lookup; `NULL` if private IP or lookup failed |
 | `created_at` | `TIMESTAMPTZ` | Click timestamp |
 
 ---

@@ -27,7 +27,7 @@
 
 **實作**：Redirect 時非同步發布點擊事件，Worker 批次寫入 `click_log`。
 
-- 記錄欄位：`referral_id`、`referrer`、`user_agent`、`ip_address`、`is_bot`（GeoIP 待補）
+- 記錄欄位：`referral_id`、`referrer`、`user_agent`、`ip_address`、`is_bot`、`country_code`（MaxMind GeoLite2 MMDB 本地查詢，private IP 或查詢失敗時為 `NULL`）
 - 可依 `creator_id`、`short_code`、`referral_id` 做歸因查詢
 
 > **進階**：可在 redirect 前加入跳轉中間頁，埋入 GA / GTM 並帶上 UTM 參數，取得更豐富的受眾與轉換歸因資料，無需自建分析 pipeline。
