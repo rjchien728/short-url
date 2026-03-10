@@ -5,28 +5,8 @@ A URL shortener service built with Go, designed for social sharing with async ba
 ---
 
 ## Architecture
+<img width="2525" height="2132" alt="image" src="https://github.com/user-attachments/assets/220eb52d-ffd5-478c-8f68-d5e1eaf5a286" />
 
-```
-                    ┌─────────────────────────────┐
-   HTTP Request ──► │         API Server          │
-                    │  POST /v1/urls               │
-                    │  GET  /:shortCode            │◄──► Redis Cache (db 0)
-                    └──────────────┬──────────────┘          │
-                                   │ publish                  │ cache miss
-                                   ▼                          ▼
-                          Redis Streams (db 1)           PostgreSQL
-                    ┌──────────────────────────┐
-                    │  stream:og-fetch         │
-                    │  stream:click-log        │
-                    └──────────────┬───────────┘
-                                   │ consume
-                                   ▼
-                    ┌─────────────────────────────┐
-                    │      Background Worker      │
-                    │  OG Fetch Worker            │──► PostgreSQL
-                    │  Click Log Worker           │──► PostgreSQL
-                    └─────────────────────────────┘
-```
 
 ### Processes
 
