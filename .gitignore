@@ -18,5 +18,9 @@ Thumbs.db
 # GeoIP database (large binary, do not commit)
 data/*.mmdb
 
+# Local design docs (keep locally, not tracked in git)
+docs/*.md
+!docs/spec.md
+
 # AI tools
 AGENTS.md
