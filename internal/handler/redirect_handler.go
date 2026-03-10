@@ -18,10 +18,15 @@ import (
 
 // ogHTMLTemplate is the HTML page returned to social bots.
 // It contains OG meta tags and a meta-refresh redirect to the original URL.
+// og:url is set to the short URL itself so Facebook binds the preview to the
+// short URL rather than inferring the canonical from the meta-refresh target.
+// og:type is fixed to "website" to avoid requiring additional type-specific tags.
 // html/template is used to auto-escape all values and prevent XSS.
 var ogHTMLTemplate = template.Must(template.New("og").Parse(`<!DOCTYPE html>
 <html>
 <head>
+<meta property="og:url" content="{{.ShortURL}}" />
+<meta property="og:type" content="website" />
 <meta property="og:title" content="{{.Title}}" />
 <meta property="og:description" content="{{.Description}}" />
 <meta property="og:image" content="{{.Image}}" />
@@ -90,8 +95,15 @@ func (h *redirectHandler) redirect(c echo.Context) error {
 	}
 
 	// Bot: return OG HTML page.
+	// Build the fully-qualified short URL so og:url points to the short link
+	// itself rather than the redirect target.
 	if isBot {
-		html := buildOGHTML(shortURL)
+		scheme := "https"
+		if c.Request().TLS == nil {
+			scheme = "http"
+		}
+		shortURLFull := scheme + "://" + c.Request().Host + "/" + shortCode
+		html := buildOGHTML(shortURL, shortURLFull)
 		return c.HTML(http.StatusOK, html)
 	}
 
@@ -106,15 +118,20 @@ type ogTemplateData struct {
 	Image       string
 	SiteName    string
 	LongURL     string
+	ShortURL    string // canonical URL of the short link, used for og:url
 }
 
 // buildOGHTML returns an HTML page with OG meta tags for social crawlers.
+// shortURL is the fully-qualified short link URL (e.g. https://s.example.com/11xnm)
+// and is written into og:url so that Facebook binds the preview to the short
+// link rather than to the redirect target.
 // All values are escaped by html/template to prevent XSS.
-// Falls back to LongURL when OGMetadata is missing or fetch failed.
-func buildOGHTML(s *entity.ShortURL) string {
+// Falls back to LongURL as title when OGMetadata is missing or fetch failed.
+func buildOGHTML(s *entity.ShortURL, shortURL string) string {
 	data := ogTemplateData{
-		Title:   s.LongURL,
-		LongURL: s.LongURL,
+		Title:    s.LongURL,
+		LongURL:  s.LongURL,
+		ShortURL: shortURL,
 	}
 
 	if s.OGMetadata != nil && !s.OGMetadata.FetchFailed {

@@ -82,12 +82,50 @@ func TestRedirectHandler_Redirect(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		body := rec.Body.String()
+		assert.Contains(t, body, "og:url")
+		assert.Contains(t, body, "og:type")
+		assert.Contains(t, body, "website")
 		assert.Contains(t, body, "og:title")
 		assert.Contains(t, body, "Example Title")
 		assert.Contains(t, body, "og:description")
 		assert.Contains(t, body, "og:image")
 		assert.Contains(t, body, "og:site_name")
 		assert.Contains(t, body, "meta http-equiv=\"refresh\"")
+	})
+
+	// og:url must point to the short link, not the redirect target
+	t.Run("200 bot og:url is short url not long url", func(t *testing.T) {
+		og := &entity.OGMetadata{
+			Title: "Some Title",
+			Image: "https://example.com/image.png",
+		}
+		botShortURL := &entity.ShortURL{
+			ID:         12345,
+			ShortCode:  "Ab3D5fG7hJ",
+			LongURL:    "https://example.com/original",
+			CreatorID:  "user_01",
+			OGMetadata: og,
+			CreatedAt:  time.Now().UTC(),
+		}
+
+		svc := mock.NewMockRedirectService(ctrl)
+		svc.EXPECT().Resolve(gomock.Any(), "Ab3D5fG7hJ").Return(botShortURL, nil)
+		svc.EXPECT().RecordClick(gomock.Any(), gomock.Any()).Return(nil)
+
+		e := setupRedirectEcho(t, svc)
+		req := httptest.NewRequest(http.MethodGet, "/Ab3D5fG7hJ", nil)
+		req.Header.Set("User-Agent", "facebookexternalhit/1.1")
+		req.Host = "s.example.com"
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		// og:url must be the short link itself
+		assert.Contains(t, body, `og:url`)
+		assert.Contains(t, body, "s.example.com/Ab3D5fG7hJ")
+		// og:url must NOT be the long URL
+		assert.NotContains(t, body, `og:url" content="https://example.com/original`)
 	})
 
 	// 200 bot with nil OGMetadata falls back to LongURL as title
