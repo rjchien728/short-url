@@ -1,9 +1,4 @@
-# 系統設計作業題：社群短網址服務
-
-題目：設計一個高可用的短網址服務（Short URL Service），應用於社群分享場景
-請設計一個短網址系統，當使用者在社群平台（如 Facebook, Thread, A-pen）分享內容時，能夠產生短網址並提供豐富的分享體驗。系統需滿足以下核心需求：
-
-## 功能需求（Functional Requirements）
+## Functional Requirements
 
 ### 1. 短網址生成與導向：將長網址轉換為短網址，並能正確重新導向至原始頁面。
 
@@ -39,7 +34,7 @@
 
 ---
 
-## 非功能需求（Non-Functional Requirements）
+## Non-Functional Requirements
 
 ### 5. 高可用性（High Availability）：服務需具備高可用性，短網址的導向不可因單點故障而中斷。
 
